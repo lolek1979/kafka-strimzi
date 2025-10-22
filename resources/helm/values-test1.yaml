@@ -114,6 +114,18 @@ kafkaUi:
     caSecretName: "kafka-vzp-test1-we-002-cluster-ca-cert"
     caCertificate: ca.crt
     mountPath: /etc/kafka/cluster-ca
+  externalCluster:
+    enabled: true
+    name: "external"
+    bootstrapServers: "kafka.ntest1.az.vzp.cz:9094"
+    securityProtocol: "SASL_SSL"
+    schemaRegistryUrl: "http://schema-registry.ntest1.az.vzp.cz:8081"
+    tls:
+      caSecretName: "kafka-external-ca"
+      caCertificate: ca.crt
+      mountPath: /etc/kafka/external-ca
+    oauth:
+      reusePrimarySecret: true
   schemaRegistryUrl: "http://schema-registry.ntest1.az.vzp.cz:8081"
   auth: { type: OAUTH2 }
   domain: ""

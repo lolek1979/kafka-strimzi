@@ -184,6 +184,20 @@ kafkaUi:
     caSecretName: ""
     caCertificate: ca.crt
     mountPath: /etc/kafka/cluster-ca
+  externalCluster:
+    enabled: false
+    name: "external"
+    bootstrapServers: ""
+    securityProtocol: "SASL_SSL"
+    schemaRegistryUrl: ""
+    tls:
+      caSecretName: ""
+      caCertificate: ca.crt
+      mountPath: /etc/kafka/external-ca
+    oauth:
+      reusePrimarySecret: true
+      k8sSecretName: ""
+      jaasKey: ""
 
   ingress:
     enabled: false

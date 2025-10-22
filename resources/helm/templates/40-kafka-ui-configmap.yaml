@@ -11,6 +11,17 @@
 {{- $defaultBootstrap := printf "%s-kafka-bootstrap.%s.svc.cluster.local:9092" $name $nsK -}}
 {{- $ver   := default "v2" $kui.oauth.issuerVersion -}}
 {{- $token := include "kafka.tokenEndpoint" (dict "ver" $ver "ctx" .) | trim -}}
+{{- $ext   := $kui.externalCluster | default (dict) -}}
+{{- $extEnabled := and ($ext.enabled | default false) ($ext.bootstrapServers | default "") -}}
+{{- $extBootstrap := default "" $ext.bootstrapServers -}}
+{{- $extName := default "external" $ext.name -}}
+{{- $extProtocol := default "SASL_SSL" $ext.securityProtocol -}}
+{{- $extOauth := $ext.oauth | default (dict) -}}
+{{- $extReuse := default true $extOauth.reusePrimarySecret -}}
+{{- $extSchema := $ext.schemaRegistryUrl | default ($kui.schemaRegistryUrl | default (printf "http://schema-registry-port.%s.svc.cluster.local:8081" $nsSR)) -}}
+{{- $extVer := default $ver $ext.oauth.issuerVersion -}}
+{{- $tokenExt := include "kafka.tokenEndpoint" (dict "ver" $extVer "ctx" .) | trim -}}
+{{- $extTls := $ext.tls | default (dict) -}}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -32,4 +43,17 @@ data:
   KAFKA_CLUSTERS_0_SCHEMAREGISTRY: {{ ($kui.schemaRegistryUrl | default (printf "http://schema-registry-port.%s.svc.cluster.local:8081" $nsSR)) | quote }}
   AUTH_TYPE: {{ ($kui.auth.type | default "DISABLED") | quote }}
   DYNAMIC_CONFIG_ENABLED: "true"
+{{- if $extEnabled }}
+  KAFKA_CLUSTERS_1_NAME: {{ $extName | quote }}
+  KAFKA_CLUSTERS_1_BOOTSTRAP_SERVERS: {{ $extBootstrap | quote }}
+  KAFKA_CLUSTERS_1_PROPERTIES_SECURITY_PROTOCOL: {{ $extProtocol | quote }}
+  KAFKA_CLUSTERS_1_PROPERTIES_SASL_MECHANISM: "OAUTHBEARER"
+  KAFKA_CLUSTERS_1_PROPERTIES_SASL_LOGIN_CALLBACK_HANDLER_CLASS: "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler"
+  KAFKA_CLUSTERS_1_PROPERTIES_SASL_OAUTHBEARER_TOKEN_ENDPOINT_URL: {{ $tokenExt | quote }}
+{{- if $extTls.caSecretName }}
+  KAFKA_CLUSTERS_1_PROPERTIES_SSL_TRUSTSTORE_TYPE: "PEM"
+  KAFKA_CLUSTERS_1_PROPERTIES_SSL_TRUSTSTORE_LOCATION: {{ printf "%s/%s" (default "/etc/kafka/external-ca" $extTls.mountPath) (default "ca.crt" $extTls.caCertificate) | quote }}
+{{- end }}
+  KAFKA_CLUSTERS_1_SCHEMAREGISTRY: {{ $extSchema | quote }}
+{{- end }}
 {{- end }}

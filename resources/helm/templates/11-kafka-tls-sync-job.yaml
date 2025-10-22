@@ -10,6 +10,10 @@
 {{- $kuiTls := (index $kui "tls") | default (dict) -}}
 {{- $kuiCaSecret := default "" (index $kuiTls "caSecretName") -}}
 {{- $kuiCaKey := default "ca.crt" (index $kuiTls "caCertificate") -}}
+{{- $kuiExt := (index $kui "externalCluster") | default (dict) -}}
+{{- $kuiExtTls := (index $kuiExt "tls") | default (dict) -}}
+{{- $kuiExtCaSecret := default "" (index $kuiExtTls "caSecretName") -}}
+{{- $kuiExtCaKey := default "ca.crt" (index $kuiExtTls "caCertificate") -}}
 {{- $sr := .Values.schemaRegistry | default (dict) -}}
 {{- $srTls := (index $sr "tls") | default (dict) -}}
 {{- $srCaSecret := default "" (index $srTls "caSecretName") -}}
@@ -189,6 +193,9 @@ spec:
               # ===== Cluster CA fan-out (Strimzi -> client namespaces) =====
 {{- if $kuiCaSecret }}
               copy_ca_secret {{ $nsUI | quote }} {{ $kuiCaSecret | quote }} {{ $kuiCaKey | quote }}
+{{- end }}
+{{- if and $kuiExtCaSecret (ne $kuiExtCaSecret $kuiCaSecret) }}
+              copy_ca_secret {{ $nsUI | quote }} {{ $kuiExtCaSecret | quote }} {{ $kuiExtCaKey | quote }}
 {{- end }}
 {{- if $srCaSecret }}
               copy_ca_secret {{ $nsSR | quote }} {{ $srCaSecret | quote }} {{ $srCaKey | quote }}
