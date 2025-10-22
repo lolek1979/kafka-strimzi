@@ -27,7 +27,7 @@ data:
   KAFKA_CLUSTERS_0_PROPERTIES_SASL_OAUTHBEARER_TOKEN_ENDPOINT_URL: {{ $token | quote }}
 {{- if $kuiTls.caSecretName }}
   KAFKA_CLUSTERS_0_PROPERTIES_SSL_TRUSTSTORE_TYPE: "PEM"
-  KAFKA_CLUSTERS_0_PROPERTIES_SSL_TRUSTSTORE_CERTIFICATES: {{ printf "%s/%s" (default "/etc/kafka/cluster-ca" $kuiTls.mountPath) (default "ca.crt" $kuiTls.caCertificate) | quote }}
+  KAFKA_CLUSTERS_0_PROPERTIES_SSL_TRUSTSTORE_LOCATION: {{ printf "%s/%s" (default "/etc/kafka/cluster-ca" $kuiTls.mountPath) (default "ca.crt" $kuiTls.caCertificate) | quote }}
 {{- end }}
   KAFKA_CLUSTERS_0_SCHEMAREGISTRY: {{ ($kui.schemaRegistryUrl | default (printf "http://schema-registry-port.%s.svc.cluster.local:8081" $nsSR)) | quote }}
   AUTH_TYPE: {{ ($kui.auth.type | default "DISABLED") | quote }}

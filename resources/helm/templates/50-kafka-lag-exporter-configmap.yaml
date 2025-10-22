@@ -38,7 +38,7 @@ data:
             sasl.jaas.config = ${?KAFKA_SASL_JAAS_CONFIG}
 {{- if $tls.caSecretName }}
             ssl.truststore.type = "PEM"
-            ssl.truststore.certificates = {{ $trustPath | quote }}
+            ssl.truststore.location = {{ $trustPath | quote }}
 {{- end }}
           }
 
@@ -50,7 +50,7 @@ data:
             sasl.jaas.config = ${?KAFKA_SASL_JAAS_CONFIG}
 {{- if $tls.caSecretName }}
             ssl.truststore.type = "PEM"
-            ssl.truststore.certificates = {{ $trustPath | quote }}
+            ssl.truststore.location = {{ $trustPath | quote }}
 {{- end }}
 
             key.deserializer   = "org.apache.kafka.common.serialization.ByteArrayDeserializer"
