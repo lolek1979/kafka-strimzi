@@ -64,7 +64,12 @@ spec:
                 path="{.data['$key']}"
                 data="$(kubectl -n {{ $nsK }} get secret "$secret" -o jsonpath="$path" 2>/dev/null || true)"
                 if [ -z "$data" ]; then
-                  echo "[cron] WARN: Secret ${secret} missing key ${key} in {{ $nsK }}"
+                  alt="{.data.$(printf '%s' "$key" | sed 's/\./\\\./g')}"
+                  data="$(kubectl -n {{ $nsK }} get secret "$secret" -o jsonpath="$alt" 2>/dev/null || true)"
+                fi
+                if [ -z "$data" ]; then
+                  keys="$(kubectl -n {{ $nsK }} get secret "$secret" -o jsonpath='{range $k,$v := .data}{$k} {end}' 2>/dev/null || true)"
+                  echo "[cron] WARN: Secret ${secret} missing key ${key} in {{ $nsK }} (available: ${keys})"
                   return 0
                 fi
                 tmp="$(mktemp)"
