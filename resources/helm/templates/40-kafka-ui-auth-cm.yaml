@@ -1,4 +1,14 @@
 {{- if .Values.kafkaUi.enabled }}
+{{- $kui   := .Values.kafkaUi | default (dict) -}}
+{{- $names := $kui.names | default (dict) -}}
+{{- $internalName := get $names "internal" | default "internal" -}}
+{{- $ext   := $kui.externalCluster | default (dict) -}}
+{{- $extEnabled := and ($ext.enabled | default false) ($ext.bootstrapServers | default "") -}}
+{{- $externalName := get $names "external" | default (default "external" $ext.name) -}}
+{{- $clusters := list $internalName -}}
+{{- if $extEnabled }}
+{{- $clusters = append $clusters $externalName -}}
+{{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -30,7 +40,10 @@ data:
     rbac:
       roles:
         - name: admins
-          clusters: [ "oauth" ]
+          clusters:
+{{- range $clusters }}
+            - "{{ . }}"
+{{- end }}
           subjects:
             - provider: oauth
               type: role
@@ -60,7 +73,10 @@ data:
               actions: view
 
         - name: readonly
-          clusters: [ "oauth" ]
+          clusters:
+{{- range $clusters }}
+            - "{{ . }}"
+{{- end }}
           subjects:
             - provider: oauth
               type: role
