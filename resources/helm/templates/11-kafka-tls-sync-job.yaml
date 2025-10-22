@@ -10,16 +10,13 @@
 {{- $kuiTls := (index $kui "tls") | default (dict) -}}
 {{- $kuiCaSecret := default "" (index $kuiTls "caSecretName") -}}
 {{- $kuiCaKey := default "ca.crt" (index $kuiTls "caCertificate") -}}
-{{- $kuiCaJson := printf "{.data['%s']}" (replace $kuiCaKey "'" "\\\\'") -}}
 {{- $sr := .Values.schemaRegistry | default (dict) -}}
 {{- $srTls := (index $sr "tls") | default (dict) -}}
 {{- $srCaSecret := default "" (index $srTls "caSecretName") -}}
 {{- $srCaKey := default "ca.crt" (index $srTls "caCertificate") -}}
-{{- $srCaJson := printf "{.data['%s']}" (replace $srCaKey "'" "\\\\'") -}}
 {{- $lagTls := (index $lagExporter "tls") | default (dict) -}}
 {{- $lagCaSecret := default "" (index $lagTls "caSecretName") -}}
 {{- $lagCaKey := default "ca.crt" (index $lagTls "caCertificate") -}}
-{{- $lagCaJson := printf "{.data['%s']}" (replace $lagCaKey "'" "\\\\'") -}}
 {{- if and .Values.azure.keyVaultName .Values.tls.materialize.enabled }}
 ---
 apiVersion: batch/v1
@@ -58,13 +55,13 @@ spec:
                 dest_ns="$1"
                 secret="$2"
                 key="$3"
-                jsonpath="$4"
                 [ -n "$secret" ] || return 0
                 if ! kubectl -n {{ $nsK }} get secret "$secret" >/dev/null 2>&1; then
                   echo "[sync] INFO: Source CA secret ${secret} not yet available in {{ $nsK }}; skipping ${dest_ns}"
                   return 0
                 fi
-                data="$(kubectl -n {{ $nsK }} get secret "$secret" -o jsonpath="${jsonpath}" 2>/dev/null || true)"
+                template=$(printf '{{index .data "%s"}}' "$key")
+                data="$(kubectl -n {{ $nsK }} get secret "$secret" -o go-template="$template" 2>/dev/null || true)"
                 if [ -z "$data" ]; then
                   echo "[sync] WARN: Secret ${secret} missing key ${key} in {{ $nsK }}"
                   return 0
@@ -186,13 +183,13 @@ spec:
 
               # ===== Cluster CA fan-out (Strimzi -> client namespaces) =====
 {{- if $kuiCaSecret }}
-              copy_ca_secret {{ $nsUI | quote }} {{ $kuiCaSecret | quote }} {{ $kuiCaKey | quote }} "{{ $kuiCaJson }}"
+              copy_ca_secret {{ $nsUI | quote }} {{ $kuiCaSecret | quote }} {{ $kuiCaKey | quote }}
 {{- end }}
 {{- if $srCaSecret }}
-              copy_ca_secret {{ $nsSR | quote }} {{ $srCaSecret | quote }} {{ $srCaKey | quote }} "{{ $srCaJson }}"
+              copy_ca_secret {{ $nsSR | quote }} {{ $srCaSecret | quote }} {{ $srCaKey | quote }}
 {{- end }}
 {{- if $lagCaSecret }}
-              copy_ca_secret {{ $nsLag | quote }} {{ $lagCaSecret | quote }} {{ $lagCaKey | quote }} "{{ $lagCaJson }}"
+              copy_ca_secret {{ $nsLag | quote }} {{ $lagCaSecret | quote }} {{ $lagCaKey | quote }}
 {{- end }}
 
           volumeMounts:
