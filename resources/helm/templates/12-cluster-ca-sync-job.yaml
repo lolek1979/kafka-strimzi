@@ -1,0 +1,96 @@
+{{- $nsK := include "kafka.ns" . -}}
+{{- $nsUI := include "kafka-ui.ns" . -}}
+{{- $nsSR := include "schema-registry.ns" . -}}
+{{- $nsLag := include "lag-exporter.ns" . -}}
+{{- $kui := .Values.kafkaUi | default (dict) -}}
+{{- $kuiTls := (index $kui "tls") | default (dict) -}}
+{{- $kuiCaSecret := default "" (index $kuiTls "caSecretName") -}}
+{{- $kuiCaKey := default "ca.crt" (index $kuiTls "caCertificate") -}}
+{{- $kuiCaJson := printf "{.data.%s}" (replace $kuiCaKey "." "\\\\.") -}}
+{{- $sr := .Values.schemaRegistry | default (dict) -}}
+{{- $srTls := (index $sr "tls") | default (dict) -}}
+{{- $srCaSecret := default "" (index $srTls "caSecretName") -}}
+{{- $srCaKey := default "ca.crt" (index $srTls "caCertificate") -}}
+{{- $srCaJson := printf "{.data.%s}" (replace $srCaKey "." "\\\\.") -}}
+{{- $lagExp := .Values.kafkaExporter | default (dict) -}}
+{{- $lagTls := (index $lagExp "tls") | default (dict) -}}
+{{- $lagCaSecret := default "" (index $lagTls "caSecretName") -}}
+{{- $lagCaKey := default "ca.crt" (index $lagTls "caCertificate") -}}
+{{- $lagCaJson := printf "{.data.%s}" (replace $lagCaKey "." "\\\\.") -}}
+{{- $loops := default 30 .Values.tls.sync.waitLoops -}}
+{{- $sleep := default 2 .Values.tls.sync.waitSleepSeconds -}}
+{{- if or $kuiCaSecret $srCaSecret $lagCaSecret }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-ca-fanout" (default "akv-secrets-job" .Values.tls.sync.jobName) | quote }}
+  namespace: {{ $nsK | quote }}
+  annotations:
+    "helm.sh/hook": "post-install,post-upgrade"
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": "before-hook-creation"
+spec:
+  backoffLimit: {{ default 0 .Values.tls.sync.backoffLimit }}
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: {{ default "tls-writer" .Values.tls.serviceAccount | quote }}
+      restartPolicy: Never
+      containers:
+      - name: ca-fanout
+        image: {{ default "alpine:3.20" .Values.tls.sync.image | quote }}
+        command: ["/bin/sh","-c"]
+        args:
+          - |-
+            set -euo pipefail
+            apk add --no-cache coreutils kubectl >/dev/null
+
+            wait_for_secret() {
+              name="$1"
+              for i in $(seq 1 {{ $loops }}); do
+                if kubectl -n {{ $nsK }} get secret "$name" >/dev/null 2>&1; then
+                  return 0
+                fi
+                sleep {{ $sleep }}
+              done
+              return 1
+            }
+
+            copy_ca_secret() {
+              dest_ns="$1"
+              secret="$2"
+              key="$3"
+              jsonpath="$4"
+              [ -n "$secret" ] || return 0
+              if ! wait_for_secret "$secret"; then
+                echo "[ca-fanout] WARN: Timed out waiting for ${secret} in {{ $nsK }}"
+                return 0
+              fi
+              data="$(kubectl -n {{ $nsK }} get secret "$secret" -o jsonpath="${jsonpath}" 2>/dev/null || true)"
+              if [ -z "$data" ]; then
+                echo "[ca-fanout] WARN: Secret ${secret} missing key ${key} in {{ $nsK }}"
+                return 0
+              fi
+              tmp="$(mktemp)"
+              if ! printf '%s' "$data" | base64 -d > "$tmp" 2>/dev/null; then
+                echo "[ca-fanout] WARN: Failed to decode ${secret}/${key}"
+                rm -f "$tmp"
+                return 0
+              fi
+              kubectl -n "$dest_ns" create secret generic "$secret" \
+                --from-file="${key}=$tmp" --dry-run=client -o yaml | kubectl apply -f -
+              echo "[ca-fanout] Cluster CA ${secret} synced to ${dest_ns}"
+              rm -f "$tmp"
+            }
+
+{{- if $kuiCaSecret }}
+            copy_ca_secret {{ $nsUI | quote }} {{ $kuiCaSecret | quote }} {{ $kuiCaKey | quote }} "{{ $kuiCaJson }}"
+{{- end }}
+{{- if $srCaSecret }}
+            copy_ca_secret {{ $nsSR | quote }} {{ $srCaSecret | quote }} {{ $srCaKey | quote }} "{{ $srCaJson }}"
+{{- end }}
+{{- if $lagCaSecret }}
+            copy_ca_secret {{ $nsLag | quote }} {{ $lagCaSecret | quote }} {{ $lagCaKey | quote }} "{{ $lagCaJson }}"
+{{- end }}
+{{- end }}

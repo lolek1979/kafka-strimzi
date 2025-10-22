@@ -6,6 +6,20 @@
 {{- $lagOAuth := default (dict) (index $lagExporter "oauth") -}}
 {{- $lagSecret := default "kafka-lag-exporter-oauth" (index $lagOAuth "k8sSecretName") -}}
 {{- $lagKey := default "sasl-jaas-config" (index $lagOAuth "jaasKey") -}}
+{{- $kui := .Values.kafkaUi | default (dict) -}}
+{{- $kuiTls := (index $kui "tls") | default (dict) -}}
+{{- $kuiCaSecret := default "" (index $kuiTls "caSecretName") -}}
+{{- $kuiCaKey := default "ca.crt" (index $kuiTls "caCertificate") -}}
+{{- $kuiCaJson := printf "{.data.%s}" (replace $kuiCaKey "." "\\\\.") -}}
+{{- $sr := .Values.schemaRegistry | default (dict) -}}
+{{- $srTls := (index $sr "tls") | default (dict) -}}
+{{- $srCaSecret := default "" (index $srTls "caSecretName") -}}
+{{- $srCaKey := default "ca.crt" (index $srTls "caCertificate") -}}
+{{- $srCaJson := printf "{.data.%s}" (replace $srCaKey "." "\\\\.") -}}
+{{- $lagTls := (index $lagExporter "tls") | default (dict) -}}
+{{- $lagCaSecret := default "" (index $lagTls "caSecretName") -}}
+{{- $lagCaKey := default "ca.crt" (index $lagTls "caCertificate") -}}
+{{- $lagCaJson := printf "{.data.%s}" (replace $lagCaKey "." "\\\\.") -}}
 {{- if and .Values.azure.keyVaultName .Values.tls.materialize.enabled }}
 ---
 apiVersion: batch/v1
@@ -39,6 +53,33 @@ spec:
             - |-
               set -euo pipefail
               apk add --no-cache openssl coreutils kubectl >/dev/null
+              
+              copy_ca_secret() {
+                dest_ns="$1"
+                secret="$2"
+                key="$3"
+                jsonpath="$4"
+                [ -n "$secret" ] || return 0
+                if ! kubectl -n {{ $nsK }} get secret "$secret" >/dev/null 2>&1; then
+                  echo "[sync] INFO: Source CA secret ${secret} not yet available in {{ $nsK }}; skipping ${dest_ns}"
+                  return 0
+                fi
+                data="$(kubectl -n {{ $nsK }} get secret "$secret" -o jsonpath="${jsonpath}" 2>/dev/null || true)"
+                if [ -z "$data" ]; then
+                  echo "[sync] WARN: Secret ${secret} missing key ${key} in {{ $nsK }}"
+                  return 0
+                fi
+                tmp="$(mktemp)"
+                if ! printf '%s' "$data" | base64 -d > "$tmp" 2>/dev/null; then
+                  echo "[sync] WARN: Failed to decode CA key ${key} from ${secret}"
+                  rm -f "$tmp"
+                  return 0
+                fi
+                kubectl -n "$dest_ns" create secret generic "$secret" \
+                  --from-file="${key}=$tmp" --dry-run=client -o yaml | kubectl apply -f -
+                echo "[sync] Cluster CA ${secret} synced to ${dest_ns}"
+                rm -f "$tmp"
+              }
 
               # ===== TLS materialization (PEM: key + fullchain) =====
               if [ -s /mnt/akv/tls.crtkey.pem ]; then
@@ -142,6 +183,17 @@ spec:
                 --from-literal=sasl-jaas-config="${SR_JAAS}" \
                 --dry-run=client -o yaml | kubectl apply -f -
               echo "[sync] schema-registry-oauth created/updated in {{ $nsSR }}"
+
+              # ===== Cluster CA fan-out (Strimzi -> client namespaces) =====
+{{- if $kuiCaSecret }}
+              copy_ca_secret {{ $nsUI | quote }} {{ $kuiCaSecret | quote }} {{ $kuiCaKey | quote }} "{{ $kuiCaJson }}"
+{{- end }}
+{{- if $srCaSecret }}
+              copy_ca_secret {{ $nsSR | quote }} {{ $srCaSecret | quote }} {{ $srCaKey | quote }} "{{ $srCaJson }}"
+{{- end }}
+{{- if $lagCaSecret }}
+              copy_ca_secret {{ $nsLag | quote }} {{ $lagCaSecret | quote }} {{ $lagCaKey | quote }} "{{ $lagCaJson }}"
+{{- end }}
 
           volumeMounts:
             - name: akv

@@ -1,5 +1,23 @@
 {{- if and .Values.azure.keyVaultName .Values.tls.materialize.enabled .Values.tls.sync.cron.enabled }}
 {{- $nsK := include "kafka.ns" . -}}
+{{- $nsUI := include "kafka-ui.ns" . -}}
+{{- $nsSR := include "schema-registry.ns" . -}}
+{{- $nsLag := include "lag-exporter.ns" . -}}
+{{- $kui := .Values.kafkaUi | default (dict) -}}
+{{- $kuiTls := (index $kui "tls") | default (dict) -}}
+{{- $kuiCaSecret := default "" (index $kuiTls "caSecretName") -}}
+{{- $kuiCaKey := default "ca.crt" (index $kuiTls "caCertificate") -}}
+{{- $kuiCaJson := printf "{.data.%s}" (replace $kuiCaKey "." "\\\\.") -}}
+{{- $sr := .Values.schemaRegistry | default (dict) -}}
+{{- $srTls := (index $sr "tls") | default (dict) -}}
+{{- $srCaSecret := default "" (index $srTls "caSecretName") -}}
+{{- $srCaKey := default "ca.crt" (index $srTls "caCertificate") -}}
+{{- $srCaJson := printf "{.data.%s}" (replace $srCaKey "." "\\\\.") -}}
+{{- $lagExp := .Values.kafkaExporter | default (dict) -}}
+{{- $lagTls := (index $lagExp "tls") | default (dict) -}}
+{{- $lagCaSecret := default "" (index $lagTls "caSecretName") -}}
+{{- $lagCaKey := default "ca.crt" (index $lagTls "caCertificate") -}}
+{{- $lagCaJson := printf "{.data.%s}" (replace $lagCaKey "." "\\\\.") -}}
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -37,6 +55,33 @@ spec:
               apk add --no-cache openssl coreutils kubectl
               ls -l /mnt/akv || true
 
+              copy_ca_secret() {
+                dest_ns="$1"
+                secret="$2"
+                key="$3"
+                jsonpath="$4"
+                [ -n "$secret" ] || return 0
+                if ! kubectl -n {{ $nsK }} get secret "$secret" >/dev/null 2>&1; then
+                  echo "[cron] INFO: Source CA secret ${secret} not yet available in {{ $nsK }}; skipping ${dest_ns}"
+                  return 0
+                fi
+                data="$(kubectl -n {{ $nsK }} get secret "$secret" -o jsonpath="${jsonpath}" 2>/dev/null || true)"
+                if [ -z "$data" ]; then
+                  echo "[cron] WARN: Secret ${secret} missing key ${key} in {{ $nsK }}"
+                  return 0
+                fi
+                tmp="$(mktemp)"
+                if ! printf '%s' "$data" | base64 -d > "$tmp" 2>/dev/null; then
+                  echo "[cron] WARN: Failed to decode CA key ${key} from ${secret}"
+                  rm -f "$tmp"
+                  return 0
+                fi
+                kubectl -n "$dest_ns" create secret generic "$secret" \
+                  --from-file="${key}=$tmp" --dry-run=client -o yaml | kubectl apply -f -
+                echo "[cron] Cluster CA ${secret} synced to ${dest_ns}"
+                rm -f "$tmp"
+              }
+
               if [ -s /mnt/akv/tls.crtkey.pem ]; then
                 awk 'BEGIN{c=0} /BEGIN CERTIFICATE/{c=1} c{print} /END CERTIFICATE/{c=0}' /mnt/akv/tls.crtkey.pem > /tmp/tls.crt || true
                 awk 'BEGIN{c=0} /BEGIN (ENCRYPTED )?PRIVATE KEY/{c=1} c{print} /END (ENCRYPTED )?PRIVATE KEY/{c=0}' /mnt/akv/tls.crtkey.pem > /tmp/tls.key || true
@@ -53,6 +98,15 @@ spec:
               else
                 echo "[cron] WARN: TLS material not found; skipping"
               fi
+{{- if $kuiCaSecret }}
+              copy_ca_secret {{ $nsUI | quote }} {{ $kuiCaSecret | quote }} {{ $kuiCaKey | quote }} "{{ $kuiCaJson }}"
+{{- end }}
+{{- if $srCaSecret }}
+              copy_ca_secret {{ $nsSR | quote }} {{ $srCaSecret | quote }} {{ $srCaKey | quote }} "{{ $srCaJson }}"
+{{- end }}
+{{- if $lagCaSecret }}
+              copy_ca_secret {{ $nsLag | quote }} {{ $lagCaSecret | quote }} {{ $lagCaKey | quote }} "{{ $lagCaJson }}"
+{{- end }}
             volumeMounts:
             - name: akv
               mountPath: /mnt/akv
