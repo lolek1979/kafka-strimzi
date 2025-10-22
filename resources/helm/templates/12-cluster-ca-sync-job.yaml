@@ -19,6 +19,8 @@
 {{- $lagCaJson := printf "{.data.%s}" (replace $lagCaKey "." "\\\\.") -}}
 {{- $loops := default 30 .Values.tls.sync.waitLoops -}}
 {{- $sleep := default 2 .Values.tls.sync.waitSleepSeconds -}}
+{{- $kafkaName := include "kafka.name" . -}}
+{{- $waitReady := default 900 .Values.tls.sync.kafkaReadyTimeoutSeconds -}}
 {{- if or $kuiCaSecret $srCaSecret $lagCaSecret }}
 ---
 apiVersion: batch/v1
@@ -45,6 +47,19 @@ spec:
           - |-
             set -euo pipefail
             apk add --no-cache coreutils kubectl >/dev/null
+
+            KAFKA_NAME="{{ $kafkaName }}"
+            WAIT_READY={{ $waitReady }}
+            if [ "$WAIT_READY" -gt 0 ]; then
+              if kubectl -n {{ $nsK }} get kafka.kafka.strimzi.io "$KAFKA_NAME" >/dev/null 2>&1; then
+                echo "[ca-fanout] Waiting for Kafka ${KAFKA_NAME} Ready (timeout: ${WAIT_READY}s)"
+                if ! kubectl -n {{ $nsK }} wait kafka.kafka.strimzi.io/"$KAFKA_NAME" --for=condition=Ready --timeout={{ printf "%ds" $waitReady }}; then
+                  echo "[ca-fanout] WARN: Kafka ${KAFKA_NAME} not Ready after ${WAIT_READY}s; continuing with CA fan-out"
+                fi
+              else
+                echo "[ca-fanout] INFO: Kafka resource ${KAFKA_NAME} not yet created; continuing with best effort"
+              fi
+            fi
 
             wait_for_secret() {
               name="$1"
