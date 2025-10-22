@@ -92,7 +92,7 @@ spec:
                 echo "[ca-fanout] WARN: Timed out waiting for ${secret} in {{ $nsK }}"
                 return 0
               fi
-              template=$(printf '{{index .data "%s"}}' "$key")
+              template=$(printf '{{- with index .data "%s" -}}{{ . }}{{- end -}}' "$key")
               data="$(kubectl -n {{ $nsK }} get secret "$secret" -o go-template="$template" 2>/dev/null || true)"
               if [ -z "$data" ]; then
                 echo "[ca-fanout] WARN: Secret ${secret} missing key ${key} in {{ $nsK }}"
