@@ -61,8 +61,8 @@ spec:
                   echo "[cron] INFO: Source CA secret ${secret} not yet available in {{ $nsK }}; skipping ${dest_ns}"
                   return 0
                 fi
-                template=$(printf '{{- with index .data "%s" -}}{{ . }}{{- end -}}' "$key")
-                data="$(kubectl -n {{ $nsK }} get secret "$secret" -o go-template="$template" 2>/dev/null || true)"
+                path="{.data['$key']}"
+                data="$(kubectl -n {{ $nsK }} get secret "$secret" -o jsonpath="$path" 2>/dev/null || true)"
                 if [ -z "$data" ]; then
                   echo "[cron] WARN: Secret ${secret} missing key ${key} in {{ $nsK }}"
                   return 0
