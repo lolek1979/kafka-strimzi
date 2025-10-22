@@ -2,7 +2,9 @@
 # Env selector
 # ================================
 env: "stage"
-
+dns:
+  subdomain: "nstage"
+  domain: "az.vzp.cz"
 # ================================
 # Namespaces (env)
 # ================================
@@ -10,18 +12,16 @@ namespaces:
   kafka: kafka
   kafkaUi: kafka-ui
   schemaRegistry: schema-registry
-  lagExporter: observability
 
 # ================================
 # Azure (env)
 # ================================
 azure:
   keyVaultName: "kv-vzp-stage-we-aks-002"
-  uamiClientId: "51f497be-2032-4061-9532-836ce4410134" # CHANGE IT
+  uamiClientId: ""  # CHANGE IT
 
-# AKV CSI objects
-oauthAkvAudienceObjectName: "kafka-oidc-audience-app-id-stage"
-oauthAkvTenantObjectName:   "kafka-oidc-tenant-id-stage"
+oauthAkvAudienceObjectName: ""
+oauthAkvTenantObjectName: ""
 
 # ================================
 # KafkaUser principals (env)
@@ -29,25 +29,26 @@ oauthAkvTenantObjectName:   "kafka-oidc-tenant-id-stage"
 kafkaUsers:
   enabled: true
   ui:
-    principal: "317e7bb4-8588-4ad8-bdc3-5c7ab31500eb" # CHANGE IT (results of aad-kafka-bootstrap.sh or AKV)
+    principal: ""  # CHANGE IT
   lag:
-    principal: "19221e7e-d8bd-4905-820b-96a863dbc62d" # CHANGE IT (results of aad-kafka-bootstrap.sh or AKV)
+    principal: ""
   schema:
-    principal: "51fc6f1a-70d8-44b1-97c3-1ccd8d9a7a63" # CHANGE IT (results of aad-kafka-bootstrap.sh or AKV)
+    principal: ""
+
 # ================================
 # Kafka (env)
 # ================================
 kafka:
   name: "kafka-vzp-stage-we-002"
   oauth:
-    audienceAppId: "94ff8e0c-3d4d-4971-a474-a43efa7231cf" # CHANGE IT (results of aad-kafka-bootstrap.sh or AKV)
+    audienceAppId: ""
   authorization:
     type: simple
     superUsers:
-      - "CN=kafka-vzp-stage-we-002-entity-operator" 
+      - "CN=kafka-vzp-stage-we-002-entity-operator"
   nodePools:
     - name: broker
-      replicas: 1
+      replicas: 3
       roles: [broker, controller]
       storage:
         type: jbod
@@ -58,54 +59,70 @@ kafka:
             class: managed-csi
             kraftMetadata: shared
             deleteClaim: false
-
   config:
-    default.replication.factor: 1
-    offsets.topic.replication.factor: 1
-    transaction.state.log.replication.factor: 1
-    min.insync.replicas: 1
-    transaction.state.log.min.isr: 1
-
+    default.replication.factor: 3
+    offsets.topic.replication.factor: 3
+    transaction.state.log.replication.factor: 3
+    min.insync.replicas: 2
+    transaction.state.log.min.isr: 2
   listeners:
     internal:
       issuerVersion: v2
       port: 9092
-      tls: false
+      tls: true
     external:
       port: 9094
       tls: true
       issuerVersion: v2
       bootstrap:
-        loadBalancerIP: "172.18.4.116"
+        loadBalancerIP: ""
       brokers:
         - id: 0
           advertisedHost: kafka-0.nstage.az.vzp.cz
-          loadBalancerIP: "172.18.4.113" # CHANGE IT
-        # - id: 1
-        #   advertisedHost: kafka-1.nstage.az.vzp.cz
-        #   loadBalancerIP: "172.18.4.114"
-        # - id: 2
-        #   advertisedHost: kafka-2.nstage.az.vzp.cz
-        #   loadBalancerIP: "172.18.4.115"
+          loadBalancerIP: ""
+        - id: 1
+          advertisedHost: kafka-1.nstage.az.vzp.cz
+          loadBalancerIP: ""
+        - id: 2
+          advertisedHost: kafka-2.nstage.az.vzp.cz
+          loadBalancerIP: ""
 
 # ================================
 # Kafka-UI (env)
 # ================================
 kafkaUi:
+  names:
+    internal: "in-cluster"
+    external: "aks-external"
   ingress: { enabled: false }
   service:
-    type: ClusterIP
+    type: LoadBalancer
     port: 80
     annotations: {}
   sso:
-    clientIdAkvName:     "kafka-ui-client-id-stage"
-    clientSecretAkvName: "kafka-ui-client-secret-stage"
+    clientIdAkvName: ""
+    clientSecretAkvName: ""
   oauth:
     issuerVersion: v2
-    securityProtocol: "SASL_PLAINTEXT"
+    securityProtocol: "SASL_SSL"
     k8sSecretName: kafka-ui-oauth
     jaasKey: "sasl-jaas-config"
-  schemaRegistryUrl: "http://schema-registry-port.schema-registry.svc.cluster.local:8081"
+  tls:
+    caSecretName: ""
+    caCertificate: ca.crt
+    mountPath: /etc/kafka/cluster-ca
+  externalCluster:
+    enabled: true
+    name: "aks-external"
+    bootstrapServers: "kafka.nstage.az.vzp.cz:9094"
+    securityProtocol: "SASL_SSL"
+    schemaRegistryUrl: ""
+    tls:
+      caSecretName: "kafka-external-ca"
+      caCertificate: ca.crt
+      mountPath: /etc/kafka/external-ca
+    oauth: {}
+  schemaRegistryUrl: "http://schema-registry.nstage.az.vzp.cz:8081"
   auth: { type: OAUTH2 }
   domain: ""
 
@@ -113,74 +130,36 @@ kafkaUi:
 # Schema Registry (env)
 # ================================
 schemaRegistry:
+  enabled: true
   image: "confluentinc/cp-schema-registry:7.9.0"
   replicas: 1
-  service: { port: 8081, type: ClusterIP }
+  service:
+    type: ClusterIP
+    port: 8081
   kafkaBootstrap: "kafka-vzp-stage-we-002-kafka-bootstrap.kafka.svc.cluster.local:9092"
   compatibilityLevel: "BACKWARD"
   kafkastoreReplicationFactor: 3
+  securityProtocol: "SASL_SSL"
   oauth:
     issuerVersion: v2
     k8sSecretName: schema-registry-oauth
     jaasKey: sasl-jaas-config
+  tls:
+    caSecretName: ""
+    caCertificate: ca.crt
+    mountPath: /etc/kafka/cluster-ca
 
-# ================================
-# Kafka Lag Exporter (env)
 # ================================
 kafkaExporter:
   enabled: true
+  securityProtocol: "SASL_SSL"
   oauth:
     k8sSecretName: kafka-lag-exporter-oauth
     jaasKey: sasl-jaas-config
+  tls:
+    caSecretName: ""
+    caCertificate: ca.crt
+    mountPath: /etc/kafka/cluster-ca
 
 # ================================
-# Topics (env-specific)
-# ================================
-topics:
-  - name: private.audit
-    partitions: 6
-    replicas: 1
-    config:
-      cleanup.policy: delete
-      retention.ms: 2419200000
-      min.insync.replicas: 1
-      unclean.leader.election.enable: "false"
-      compression.type: zstd
-      segment.bytes: 1073741824
-      max.message.bytes: 1048576
-
-  - name: public.csc.dwh
-    partitions: 6
-    replicas: 1
-    config:
-      cleanup.policy: delete
-      retention.ms: 1209600000
-      min.insync.replicas: 1
-      unclean.leader.election.enable: "false"
-      compression.type: zstd
-      segment.bytes: 1073741824
-      max.message.bytes: 1048576
-
-  - name: public.csc.dwh.ack
-    partitions: 3
-    replicas: 1
-    config:
-      cleanup.policy: delete
-      retention.ms: 86400000
-      min.insync.replicas: 1
-      unclean.leader.election.enable: "false"
-      compression.type: zstd
-      segment.bytes: 1073741824
-      max.message.bytes: 1048576
-
-  - name: kafka-logs-topic
-    partitions: 3
-    replicas: 1
-    config:
-      cleanup.policy: delete
-      retention.ms: 604800000
-      min.insync.replicas: 1
-      unclean.leader.election.enable: "false"
-      compression.type: zstd
-      segment.bytes: 1073741824
-      max.message.bytes: 1048576
+topics: []
