@@ -141,6 +141,7 @@ kafkaExporter:
   replicas: 1
   pollInterval: 30s
   javaOpts: "-XX:MaxRAMPercentage=70.0"
+  securityProtocol: "SASL_PLAINTEXT"
   oauth:
     tokenEndpointVersion: v2
     k8sSecretName: kafka-lag-exporter-oauth   # Secret created by AKV sync job (namespace = lagExporter)
@@ -151,6 +152,10 @@ kafkaExporter:
     interval: 30s
   amaScrape:
     enabled: true
+  tls:
+    caSecretName: ""
+    caCertificate: ca.crt
+    mountPath: /etc/kafka/cluster-ca
 
 # ================================
 # Kafka-UI defaults
@@ -174,6 +179,10 @@ kafkaUi:
     jaasKey: sasl-jaas-config
     kv:
       jaasName: kafka-ui-sasl-jaas-config
+  tls:
+    caSecretName: ""
+    caCertificate: ca.crt
+    mountPath: /etc/kafka/cluster-ca
 
   ingress:
     enabled: false
@@ -201,10 +210,15 @@ schemaRegistry:
   kafkaBootstrap: ""
   compatibilityLevel: "BACKWARD"
   kafkastoreReplicationFactor: 3
+  securityProtocol: "SASL_PLAINTEXT"
   oauth:
     issuerVersion: v2
     k8sSecretName: schema-registry-oauth
     jaasKey: sasl-jaas-config
+  tls:
+    caSecretName: ""
+    caCertificate: ca.crt
+    mountPath: /etc/kafka/cluster-ca
     
 # ================================
 # Example topics

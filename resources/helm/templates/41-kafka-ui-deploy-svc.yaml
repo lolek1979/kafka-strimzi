@@ -1,4 +1,6 @@
 {{- if .Values.kafkaUi.enabled }}
+{{- $kui := .Values.kafkaUi | default (dict) -}}
+{{- $tls := $kui.tls | default (dict) -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -46,9 +48,19 @@ spec:
             - name: kafka-ui-auth
               mountPath: /etc/kafkaui
               readOnly: true
+{{- if $tls.caSecretName }}
+            - name: kafka-cluster-ca
+              mountPath: {{ $tls.mountPath | default "/etc/kafka/cluster-ca" }}
+              readOnly: true
+{{- end }}
       volumes:
         - name: kafka-ui-auth
           configMap: { name: kafka-ui-auth }
+{{- if $tls.caSecretName }}
+        - name: kafka-cluster-ca
+          secret:
+            secretName: {{ $tls.caSecretName | quote }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

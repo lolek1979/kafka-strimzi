@@ -9,6 +9,7 @@
 {{- $bootstrap := ($cfg.kafkaBootstrap | default (printf "%s-kafka-bootstrap.%s.svc.cluster.local:%d" $name $kns (int (default 9092 .Values.kafka.listeners.internal.port)))) -}}
 {{- $ver := default "v2" $cfg.oauth.issuerVersion -}}
 {{- $tokenUrl := include "kafka.tokenEndpoint" (dict "ver" $ver "ctx" .) | trim -}}
+{{- $tls := $cfg.tls | default (dict) -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -34,18 +35,34 @@ spec:
         - { name: SCHEMA_REGISTRY_LISTENERS, value: "http://0.0.0.0:8081" }
         - { name: SCHEMA_REGISTRY_HOST_NAME, value: "$(POD_IP)" }
         - { name: SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS, value: {{ $bootstrap | quote }} }
-        - { name: SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL, value: "SASL_PLAINTEXT" }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL, value: {{ ($cfg.securityProtocol | default "SASL_PLAINTEXT") | quote }} }
         - { name: SCHEMA_REGISTRY_KAFKASTORE_SASL_MECHANISM, value: "OAUTHBEARER" }
         - { name: SCHEMA_REGISTRY_KAFKASTORE_SASL_LOGIN_CALLBACK_HANDLER_CLASS, value: "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler" }
         - { name: SCHEMA_REGISTRY_KAFKASTORE_SASL_CLIENT_CALLBACK_HANDLER_CLASS, value: "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler" }
         - name: SCHEMA_REGISTRY_KAFKASTORE_SASL_JAAS_CONFIG
           valueFrom: { secretKeyRef: { name: {{ $cfg.oauth.k8sSecretName | default "schema-registry-oauth" | quote }}, key: {{ $cfg.oauth.jaasKey | default "sasl-jaas-config" | quote }} } }
         - { name: SCHEMA_REGISTRY_KAFKASTORE_SASL_OAUTHBEARER_TOKEN_ENDPOINT_URL, value: {{ $tokenUrl | quote }} }
+{{- if $tls.caSecretName }}
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_TYPE, value: "PEM" }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_CERTIFICATES, value: {{ printf "%s/%s" (default "/etc/kafka/cluster-ca" $tls.mountPath) (default "ca.crt" $tls.caCertificate) | quote }} }
+{{- end }}
         - { name: SCHEMA_REGISTRY_KAFKASTORE_TOPIC, value: "_schemas" }
         - { name: SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR, value: {{ printf "%d" (int ($cfg.kafkastoreReplicationFactor | default 3)) | quote }} }
         - { name: SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL, value: {{ $cfg.compatibilityLevel | default "BACKWARD" | quote }} }
+{{- if $tls.caSecretName }}
+        volumeMounts:
+        - name: kafka-cluster-ca
+          mountPath: {{ $tls.mountPath | default "/etc/kafka/cluster-ca" }}
+          readOnly: true
+{{- end }}
         readinessProbe: { httpGet: { path: /subjects, port: http }, initialDelaySeconds: 60, periodSeconds: 10, timeoutSeconds: 3 }
         livenessProbe:  { httpGet: { path: /subjects, port: http }, initialDelaySeconds: 90, periodSeconds: 15, timeoutSeconds: 3 }
+{{- if $tls.caSecretName }}
+      volumes:
+      - name: kafka-cluster-ca
+        secret:
+          secretName: {{ $tls.caSecretName | quote }}
+{{- end }}
 ---
 ---
 apiVersion: v1

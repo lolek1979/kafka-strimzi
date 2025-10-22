@@ -6,6 +6,7 @@
 {{- $exp := .Values.kafkaExporter | default (dict) -}}
 {{- $secretName := default "kafka-lag-exporter-oauth" $exp.oauth.k8sSecretName -}}
 {{- $secretKey := default "sasl-jaas-config" $exp.oauth.jaasKey -}}
+{{- $tls := $exp.tls | default (dict) -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -34,10 +35,22 @@ spec:
           value: {{ default "-XX:MaxRAMPercentage=70.0" $exp.javaOpts | quote }}
         readinessProbe: { httpGet: { path: /metrics, port: http }, initialDelaySeconds: 5, periodSeconds: 10 }
         livenessProbe:  { httpGet: { path: /metrics, port: http }, initialDelaySeconds: 20, periodSeconds: 20 }
-        volumeMounts: [{ name: cfg, mountPath: /opt/docker/conf }]
+        volumeMounts:
+        - name: cfg
+          mountPath: /opt/docker/conf
+{{- if $tls.caSecretName }}
+        - name: kafka-cluster-ca
+          mountPath: {{ $tls.mountPath | default "/etc/kafka/cluster-ca" }}
+          readOnly: true
+{{- end }}
       volumes:
       - name: cfg
         configMap: { name: kafka-lag-exporter-config }
+{{- if $tls.caSecretName }}
+      - name: kafka-cluster-ca
+        secret:
+          secretName: {{ $tls.caSecretName | quote }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

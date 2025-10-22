@@ -8,6 +8,9 @@
 {{- $bootstrap := printf "%s-kafka-bootstrap.%s.svc.cluster.local:%d" $name $nsKafka (int (default 9092 .Values.kafka.listeners.internal.port)) -}}
 {{- $ver := default "v2" .Values.kafkaExporter.oauth.tokenEndpointVersion -}}
 {{- $token := include "kafka.tokenEndpoint" (dict "ver" $ver "ctx" .) | trim -}}
+{{- $exp := .Values.kafkaExporter | default (dict) -}}
+{{- $tls := $exp.tls | default (dict) -}}
+{{- $trustPath := printf "%s/%s" (default "/etc/kafka/cluster-ca" $tls.mountPath) (default "ca.crt" $tls.caCertificate) -}}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -28,19 +31,27 @@ data:
           bootstrap-brokers = {{ $bootstrap | quote }}
 
           admin-client-properties {
-            security.protocol = "SASL_PLAINTEXT"
+            security.protocol = {{ ($exp.securityProtocol | default "SASL_PLAINTEXT") | quote }}
             sasl.mechanism = "OAUTHBEARER"
             sasl.login.callback.handler.class = "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler"
             sasl.oauthbearer.token.endpoint.url = {{ $token | quote }}
             sasl.jaas.config = ${?KAFKA_SASL_JAAS_CONFIG}
+{{- if $tls.caSecretName }}
+            ssl.truststore.type = "PEM"
+            ssl.truststore.certificates = {{ $trustPath | quote }}
+{{- end }}
           }
 
           consumer-properties {
-            security.protocol = "SASL_PLAINTEXT"
+            security.protocol = {{ ($exp.securityProtocol | default "SASL_PLAINTEXT") | quote }}
             sasl.mechanism = "OAUTHBEARER"
             sasl.login.callback.handler.class = "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler"
             sasl.oauthbearer.token.endpoint.url = {{ $token | quote }}
             sasl.jaas.config = ${?KAFKA_SASL_JAAS_CONFIG}
+{{- if $tls.caSecretName }}
+            ssl.truststore.type = "PEM"
+            ssl.truststore.certificates = {{ $trustPath | quote }}
+{{- end }}
 
             key.deserializer   = "org.apache.kafka.common.serialization.ByteArrayDeserializer"
             value.deserializer = "org.apache.kafka.common.serialization.ByteArrayDeserializer"

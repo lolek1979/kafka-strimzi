@@ -72,7 +72,7 @@ kafka:
     internal:
       issuerVersion: v2
       port: 9092
-      tls: false
+      tls: true
 
     external:
       port: 9094
@@ -107,9 +107,13 @@ kafkaUi:
     clientSecretAkvName: "kafka-ui-client-secret-test1"
   oauth:
     issuerVersion: v2
-    securityProtocol: "SASL_PLAINTEXT"
+    securityProtocol: "SASL_SSL"
     k8sSecretName: kafka-ui-oauth
     jaasKey: "sasl-jaas-config"
+  tls:
+    caSecretName: "kafka-vzp-test1-we-002-cluster-ca-cert"
+    caCertificate: ca.crt
+    mountPath: /etc/kafka/cluster-ca
   schemaRegistryUrl: "http://schema-registry.ntest1.az.vzp.cz:8081"
   auth: { type: OAUTH2 }
   domain: ""
@@ -132,17 +136,27 @@ schemaRegistry:
   kafkaBootstrap: "kafka-vzp-test1-we-002-kafka-bootstrap.kafka.svc.cluster.local:9092"
   compatibilityLevel: "BACKWARD"
   kafkastoreReplicationFactor: 2
+  securityProtocol: "SASL_SSL"
   oauth:
     issuerVersion: v2
     k8sSecretName: schema-registry-oauth
     jaasKey: sasl-jaas-config
+  tls:
+    caSecretName: "kafka-vzp-test1-we-002-cluster-ca-cert"
+    caCertificate: ca.crt
+    mountPath: /etc/kafka/cluster-ca
 
 # ================================
 kafkaExporter:
   enabled: true
+  securityProtocol: "SASL_SSL"
   oauth:
     k8sSecretName: kafka-lag-exporter-oauth
     jaasKey: sasl-jaas-config
+  tls:
+    caSecretName: "kafka-vzp-test1-we-002-cluster-ca-cert"
+    caCertificate: ca.crt
+    mountPath: /etc/kafka/cluster-ca
 
 # ================================
 # Topics (env-specific)
