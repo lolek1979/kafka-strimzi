@@ -97,6 +97,7 @@ kafka:
 kafkaUi:
   names:
     internal: "internal"
+    external: "external"
   ingress: { enabled: false }
   service:
     type: LoadBalancer

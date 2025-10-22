@@ -4,6 +4,7 @@
 {{- if .Values.kafkaUi.enabled }}
 {{- $kui   := .Values.kafkaUi | default (dict) -}}
 {{- $kuiTls := $kui.tls | default (dict) -}}
+{{- $names := $kui.names | default (dict) -}}
 {{- $nsK   := include "kafka.ns" . -}}
 {{- $nsUI  := include "kafka-ui.ns" . -}}
 {{- $nsSR  := include "schema-registry.ns" . | default "schema-registry" -}}
@@ -30,7 +31,7 @@ metadata:
   namespace: {{ $nsUI }}
   labels: { app: kafka-ui }
 data:
-  KAFKA_CLUSTERS_0_NAME: {{ (get (default (dict) $kui.names) "oauth" | default "oauth") | quote }}
+  KAFKA_CLUSTERS_0_NAME: {{ (get $names "internal" | default "internal") | quote }}
   KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: {{ $defaultBootstrap | quote }}
   KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: {{ default "SASL_SSL" $kui.oauth.securityProtocol | quote }}
   KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM: "OAUTHBEARER"
@@ -44,7 +45,7 @@ data:
   AUTH_TYPE: {{ ($kui.auth.type | default "DISABLED") | quote }}
   DYNAMIC_CONFIG_ENABLED: "true"
 {{- if $extEnabled }}
-  KAFKA_CLUSTERS_1_NAME: {{ $extName | quote }}
+  KAFKA_CLUSTERS_1_NAME: {{ (get $names "external" | default $extName) | quote }}
   KAFKA_CLUSTERS_1_BOOTSTRAP_SERVERS: {{ $extBootstrap | quote }}
   KAFKA_CLUSTERS_1_PROPERTIES_SECURITY_PROTOCOL: {{ $extProtocol | quote }}
   KAFKA_CLUSTERS_1_PROPERTIES_SASL_MECHANISM: "OAUTHBEARER"
