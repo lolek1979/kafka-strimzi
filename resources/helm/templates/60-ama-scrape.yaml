@@ -1,0 +1,13 @@
+# ==============================
+# templates/60-ama-scrape.yaml (optional helper)
+# ==============================
+{{- if and .Values.kafkaExporter .Values.kafkaExporter.amaScrape.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ama-scrape-readme
+  namespace: {{ include "lag-exporter.ns" . }}
+data:
+  info: "Kafka Lag Exporter Service has prometheus.io/* annotations for AMA."
+{{- end }}

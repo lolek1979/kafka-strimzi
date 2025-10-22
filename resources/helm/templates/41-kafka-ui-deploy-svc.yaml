@@ -1,0 +1,75 @@
+{{- if .Values.kafkaUi.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-ui
+  namespace: {{ include "kafka-ui.ns" . }}
+  labels:
+    app: kafka-ui
+spec:
+  replicas: {{ default 1 .Values.kafkaUi.replicas }}
+  selector:
+    matchLabels:
+      app: kafka-ui
+  template:
+    metadata:
+      labels:
+        app: kafka-ui
+      annotations:
+        checksum/config: "{{ include (print $.Template.BasePath "/40-kafka-ui-configmap.yaml") . | sha256sum }}"
+        checksum/authcm: "{{ include (print $.Template.BasePath "/40-kafka-ui-auth-cm.yaml") . | sha256sum }}"
+    spec:
+      containers:
+        - name: ui
+          image: {{ default "kafbat/kafka-ui:latest" .Values.kafkaUi.image }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.kafkaUi.imagePullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: kafka-ui
+          env:
+            - name: KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default "kafka-ui-oauth" .Values.kafkaUi.oauth.k8sSecretName | quote }}
+                  key:  {{ default "sasl-jaas-config" .Values.kafkaUi.oauth.jaasKey | quote }}
+            - name: KAFKA_UI_SSO_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: kafka-ui-sso, key: clientId } }
+            - name: KAFKA_UI_SSO_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: kafka-ui-sso, key: clientSecret } }
+            - name: SPRING_CONFIG_ADDITIONAL_LOCATION
+              value: /etc/kafkaui/
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: kafka-ui-auth
+              mountPath: /etc/kafkaui
+              readOnly: true
+      volumes:
+        - name: kafka-ui-auth
+          configMap: { name: kafka-ui-auth }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-ui
+  namespace: {{ include "kafka-ui.ns" . }}
+  labels:
+    app: kafka-ui
+  {{- with .Values.kafkaUi.service.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+spec:
+  type: {{ default "ClusterIP" .Values.kafkaUi.service.type }}
+  {{- with .Values.kafkaUi.service.loadBalancerIP }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  ports:
+    - name: http
+      port: {{ default 80 .Values.kafkaUi.service.port }}
+      targetPort: 8080
+  selector:
+    app: kafka-ui
+{{- end }}

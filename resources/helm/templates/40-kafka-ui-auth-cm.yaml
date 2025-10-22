@@ -1,0 +1,85 @@
+{{- if .Values.kafkaUi.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-ui-auth
+  namespace: {{ include "kafka-ui.ns" . }}
+data:
+  application.yml: |-
+    auth:
+      type: OAUTH2
+      oauth2:
+        client:
+          azure:
+            provider: azure
+            clientId: ${KAFKA_UI_SSO_CLIENT_ID}
+            clientSecret: ${KAFKA_UI_SSO_CLIENT_SECRET}
+            scope:
+              - openid
+              - profile
+              - email
+            client-name: azure
+            issuer-uri: https://login.microsoftonline.com/{{ .Values.azure.tenantId }}/v2.0
+            jwk-set-uri: https://login.microsoftonline.com/{{ .Values.azure.tenantId }}/discovery/v2.0/keys
+            user-name-attribute: name
+            custom-params:
+              type: oauth
+              roles-field: roles
+
+    rbac:
+      roles:
+        - name: admins
+          clusters: [ "oauth" ]
+          subjects:
+            - provider: oauth
+              type: role
+              value: KafkaUI-Admins
+          permissions:
+            - resource: applicationconfig
+              actions: all
+            - resource: clusterconfig
+              actions: all
+            - resource: topic
+              value: ".*"
+              actions: all
+            - resource: consumer
+              value: ".*"
+              actions: all
+            - resource: schema
+              value: ".*"
+              actions: all
+            - resource: connect
+              value: ".*"
+              actions: all
+            - resource: ksql
+              actions: all
+            - resource: acl
+              actions: all
+            - resource: audit
+              actions: view
+
+        - name: readonly
+          clusters: [ "oauth" ]
+          subjects:
+            - provider: oauth
+              type: role
+              value: KafkaUI-ReadOnly
+          permissions:
+            - resource: clusterconfig
+              actions: [ view ]
+            - resource: topic
+              value: ".*"
+              actions: [ VIEW, MESSAGES_READ, ANALYSIS_VIEW ]
+            - resource: consumer
+              value: ".*"
+              actions: [ view ]
+            - resource: schema
+              value: ".*"
+              actions: [ view ]
+            - resource: connect
+              value: ".*"
+              actions: [ view ]
+            - resource: acl
+              actions: [ view ]
+{{- end }}

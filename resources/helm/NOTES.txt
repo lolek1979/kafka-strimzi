@@ -1,0 +1,64 @@
+***************************************************
+Kafka + Azure AD (OIDC) + AKV TLS
+***************************************************
+
+Deployed (high level):
+- Namespaces:
+  • {{ include "kafka.ns" . }}, {{ include "kafka-ui.ns" . }}, {{ include "schema-registry.ns" . }}
+
+- AKV integration:
+  • SecretProviderClass: {{ .Values.tls.spcName }} (in {{ include "kafka.ns" . }})
+  • Materializer Job creates/updates these K8s Secrets from AKV:
+      - {{ .Values.tls.k8sSecretName }} (TLS for brokers; tls.crt fullchain + tls.key) in ns {{ include "kafka.ns" . }}
+      - kafka-external-ca (CA chain only for clients) in ns {{ include "kafka.ns" . }}
+      - {{ dig "kafkaExporter" "oauth" "secretName" "kafka-lag-exporter-oauth" .Values }} in ns {{ include "kafka.ns" . }}
+      - {{ .Values.kafkaUi.oauth.k8sSecretName | default "kafka-ui-oauth" }} in ns {{ include "kafka-ui.ns" . }}
+      - {{ .Values.schemaRegistry.oauth.k8sSecretName | default "schema-registry-oauth" }} in ns {{ include "schema-registry.ns" . }}
+
+- Kafka (Strimzi):
+  • Cluster: {{ .Values.kafka.name }}
+  • Version: {{ .Values.kafka.version }}  (metadata {{ .Values.kafka.metadataVersion }})
+  • KRaft mode
+  • Internal listener: port {{ .Values.kafka.listeners.internal.port | default 9092 }}, SASL_OAUTHBEARER (AAD v2)
+  • External listener: port {{ .Values.kafka.listeners.external.port | default 9094 }}, TLS + SASL_OAUTHBEARER
+
+OAuth (listeners):
+- Issuer (internal/external):  {{ include "kafka.issuerUri" (dict "ver" (default "v2" .Values.kafka.listeners.internal.issuerVersion) "ctx" .) }}
+- JWKS:                        {{ include "kafka.jwksUri"  (dict "ctx" .) }}
+- Audience enforcement:        checkAudience=true, clientId={{ .Values.kafka.oauth.audienceAppId }}
+
+What to verify next:
+1) Key Vault objects exist and UAMI can read them:
+   - TLS PEM secret: {{ .Values.tls.certObjectName | default "kafka-tls" }}
+   - (Optional) CA chain secret: {{ .Values.tls.caAkvObjectName | default "kafka-listener-ca" }}
+   - OAuth client creds + OIDC inputs:
+        kafka-ui-client-id / kafka-ui-client-secret
+        kafka-lag-client-id-{{ .Values.env | default "otest" }} / kafka-lag-client-secret-{{ .Values.env | default "otest" }}
+        kafka-schema-client-id-{{ .Values.env | default "otest" }} / kafka-schema-client-secret-{{ .Values.env | default "otest" }}
+        kafka-oidc-audience, kafka-oidc-tenant
+
+2) Materialized K8s Secrets:
+   kubectl -n {{ include "kafka.ns" . }}            get secret {{ .Values.tls.k8sSecretName }} kafka-external-ca {{ dig "kafkaExporter" "oauth" "secretName" "kafka-lag-exporter-oauth" .Values }}
+   kubectl -n {{ include "kafka-ui.ns" . }}         get secret {{ .Values.kafkaUi.oauth.k8sSecretName | default "kafka-ui-oauth" }}
+   kubectl -n {{ include "schema-registry.ns" . }}  get secret {{ .Values.schemaRegistry.oauth.k8sSecretName | default "schema-registry-oauth" }}
+
+3) Brokers healthy:
+   kubectl -n {{ include "kafka.ns" . }} get pods -l strimzi.io/cluster={{ .Values.kafka.name }}
+
+4) (Optional) Kafka-UI and Kafka Exporter up:
+   - UI:       kubectl -n {{ include "kafka-ui.ns" . }} get deploy kafka-ui
+   - Exporter: kubectl -n {{ include "kafka.ns" . }} get deploy {{ include "kafka.name" . }}-kafka-exporter
+   - Exporter metrics:  kubectl -n {{ include "kafka.ns" . }} port-forward svc/{{ include "kafka.name" . }}-kafka-exporter 9999:9404 & \
+                        curl -s localhost:9999/metrics | head
+
+Helm handy:
+- First install:
+  helm upgrade --install kafka . \
+    -n {{ include "kafka.ns" . }} --create-namespace \
+    -f values.yaml -f values-<env>.yaml --wait
+
+- Subsequent upgrades (namespaces already exist):
+  helm upgrade --install kafka . \
+    -n {{ include "kafka.ns" . }} \
+    -f values.yaml -f values-<env>.yaml --wait --set manageNamespace=false
+***************************************************

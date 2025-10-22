@@ -1,0 +1,30 @@
+# ==============================
+# templates/40-kafka-ui-configmap.yaml
+# ==============================
+{{- if .Values.kafkaUi.enabled }}
+{{- $kui   := .Values.kafkaUi | default (dict) -}}
+{{- $nsK   := include "kafka.ns" . -}}
+{{- $nsUI  := include "kafka-ui.ns" . -}}
+{{- $nsSR  := include "schema-registry.ns" . | default "schema-registry" -}}
+{{- $name  := include "kafka.name" . -}}
+{{- $defaultBootstrap := printf "%s-kafka-bootstrap.%s.svc.cluster.local:9092" $name $nsK -}}
+{{- $ver   := default "v2" $kui.oauth.issuerVersion -}}
+{{- $token := include "kafka.tokenEndpoint" (dict "ver" $ver "ctx" .) | trim -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-ui
+  namespace: {{ $nsUI }}
+  labels: { app: kafka-ui }
+data:
+  KAFKA_CLUSTERS_0_NAME: {{ (get (default (dict) $kui.names) "oauth" | default "oauth") | quote }}
+  KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: {{ $defaultBootstrap | quote }}
+  KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: {{ default "SASL_SSL" $kui.oauth.securityProtocol | quote }}
+  KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM: "OAUTHBEARER"
+  KAFKA_CLUSTERS_0_PROPERTIES_SASL_LOGIN_CALLBACK_HANDLER_CLASS: "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler"
+  KAFKA_CLUSTERS_0_PROPERTIES_SASL_OAUTHBEARER_TOKEN_ENDPOINT_URL: {{ $token | quote }}
+  KAFKA_CLUSTERS_0_SCHEMAREGISTRY: {{ ($kui.schemaRegistryUrl | default (printf "http://schema-registry-port.%s.svc.cluster.local:8081" $nsSR)) | quote }}
+  AUTH_TYPE: {{ ($kui.auth.type | default "DISABLED") | quote }}
+  DYNAMIC_CONFIG_ENABLED: "true"
+{{- end }}

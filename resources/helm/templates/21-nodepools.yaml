@@ -1,0 +1,19 @@
+# ==============================
+# templates/21-nodepools.yaml
+# ==============================
+{{- $ns := include "kafka.ns" . -}}
+{{- $name := include "kafka.name" . -}}
+{{- range .Values.kafka.nodePools }}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: {{ .name }}
+  namespace: {{ $ns }}
+  labels: { strimzi.io/cluster: {{ $name }} }
+spec:
+  replicas: {{ .replicas }}
+  roles: {{ toYaml .roles | nindent 2 }}
+  storage:
+{{ toYaml .storage | indent 4 }}
+{{- end }}

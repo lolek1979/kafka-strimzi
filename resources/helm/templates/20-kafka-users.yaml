@@ -1,0 +1,109 @@
+# ==============================
+# templates/20-kafka-users.yaml
+# ==============================
+{{- if and .Values.kafkaUsers .Values.kafkaUsers.enabled }}
+{{- $cluster := required "Set .Values.kafka.name" .Values.kafka.name }}
+
+---
+# Kafka-UI principal
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: {{ required "Set .Values.kafkaUsers.ui.principal" .Values.kafkaUsers.ui.principal | quote }}
+  labels:
+    strimzi.io/cluster: {{ $cluster }}
+spec:
+  authorization:
+    type: simple
+    acls:
+      # ---- Cluster-level ----
+      - resource: { type: cluster }            # view cluster
+        operation: Describe
+      - resource: { type: cluster }            # view broker/topic configs
+        operation: DescribeConfigs
+      - resource: { type: cluster }            # required for some admin ops
+        operation: Alter
+
+      # ---- Topics: everything on all topics ----
+      - resource: { type: topic, name: "*", patternType: literal }  # create topics
+        operation: Create
+      - resource: { type: topic, name: "*", patternType: literal }  # delete topics
+        operation: Delete
+      - resource: { type: topic, name: "*", patternType: literal }  # change configs
+        operation: AlterConfigs
+      - resource: { type: topic, name: "*", patternType: literal }  # alter metadata
+        operation: Alter
+      - resource: { type: topic, name: "*", patternType: literal }  # read
+        operation: Read
+      - resource: { type: topic, name: "*", patternType: literal }  # write
+        operation: Write
+      - resource: { type: topic, name: "*", patternType: literal }  # describe
+        operation: Describe
+      - resource: { type: topic, name: "*", patternType: literal }  # view configs
+        operation: DescribeConfigs
+
+      # ---- Consumer groups: view & delete on all groups ----
+      - resource: { type: group, name: "*", patternType: literal }
+        operation: Describe
+      - resource: { type: group, name: "*", patternType: literal }
+        operation: Read
+      - resource: { type: group, name: "*", patternType: literal }  # allows group deletion from UI
+        operation: Delete
+
+---
+# Lag Exporter principal
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: {{ required "Set .Values.kafkaUsers.lag.principal" .Values.kafkaUsers.lag.principal | quote }}
+  labels:
+    strimzi.io/cluster: {{ $cluster }}
+spec:
+  authorization:
+    type: simple
+    acls:
+      - resource: { type: cluster }
+        operation: Describe
+      - resource: { type: topic,  name: "*", patternType: literal }
+        operation: Describe
+      - resource: { type: group,  name: "*", patternType: literal }
+        operation: Describe
+
+---
+# Schema Registry principal
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: {{ required "Set .Values.kafkaUsers.schema.principal" .Values.kafkaUsers.schema.principal | quote }}
+  labels:
+    strimzi.io/cluster: {{ $cluster }}
+spec:
+  authorization:
+    type: simple
+    acls:
+      # cluster
+      - resource: { type: cluster }
+        operation: Describe
+
+      # leader election group
+      - resource: { type: group, name: "schema-registry", patternType: literal }
+        operation: Describe
+      - resource: { type: group, name: "schema-registry", patternType: literal }
+        operation: Read
+
+      # _schemas topic – full control
+      - resource: { type: topic, name: "_schemas", patternType: literal }
+        operation: Create
+      - resource: { type: topic, name: "_schemas", patternType: literal }
+        operation: Describe
+      - resource: { type: topic, name: "_schemas", patternType: literal }
+        operation: Read
+      - resource: { type: topic, name: "_schemas", patternType: literal }
+        operation: Write
+      - resource: { type: topic, name: "_schemas", patternType: literal }
+        operation: DescribeConfigs
+      - resource: { type: topic, name: "_schemas", patternType: literal }
+        operation: Alter
+      - resource: { type: topic, name: "_schemas", patternType: literal }
+        operation: AlterConfigs
+{{- end }}

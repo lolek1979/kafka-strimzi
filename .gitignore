@@ -1,0 +1,16 @@
+# ─── Vendored Helm charts ──────────────────────────────────────
+# Don’t commit the charts/ directory that 'helm dependency update' creates
+resources/helm/airflow/charts/
+
+# ─── Packaged chart archives ───────────────────────────────────
+# Ignore any .tgz files (umbrella packages)
+*.tgz
+
+# ─── Local Helm state ─────────────────────────────────────────
+# (if you ever run helm init or helm plugin locally)
+.helm/
+
+# VS Code
+.vscode/
+# strip Windows ADS leftovers
+*Zone.Identifier*

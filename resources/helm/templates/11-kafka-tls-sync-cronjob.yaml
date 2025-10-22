@@ -1,0 +1,60 @@
+{{- if and .Values.azure.keyVaultName .Values.tls.materialize.enabled .Values.tls.sync.cron.enabled }}
+{{- $nsK := include "kafka.ns" . -}}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ printf "%s-cron" (default "akv-secrets-materialize" .Values.tls.sync.jobName) }}
+  namespace: {{ $nsK }}
+spec:
+  schedule: {{ .Values.tls.sync.cron.schedule | quote }}
+  {{- with .Values.tls.sync.cron.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  successfulJobsHistoryLimit: {{ .Values.tls.sync.cron.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.tls.sync.cron.failedJobsHistoryLimit }}
+  suspend: {{ .Values.tls.sync.cron.suspend }}
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: {{ default "tls-writer" .Values.tls.serviceAccount }}
+          restartPolicy: Never
+          volumes:
+          - name: akv
+            csi:
+              driver: secrets-store.csi.k8s.io
+              readOnly: true
+              volumeAttributes:
+                secretProviderClass: {{ default "kafka-akv-secrets-spc" .Values.tls.spcName }}
+          containers:
+          - name: refresher
+            image: {{ default "alpine:3.20" .Values.tls.sync.image }}
+            command: ["/bin/sh","-c"]
+            args:
+            - |
+              set -euo pipefail
+              apk add --no-cache openssl coreutils kubectl
+              ls -l /mnt/akv || true
+
+              if [ -s /mnt/akv/tls.crtkey.pem ]; then
+                awk 'BEGIN{c=0} /BEGIN CERTIFICATE/{c=1} c{print} /END CERTIFICATE/{c=0}' /mnt/akv/tls.crtkey.pem > /tmp/tls.crt || true
+                awk 'BEGIN{c=0} /BEGIN (ENCRYPTED )?PRIVATE KEY/{c=1} c{print} /END (ENCRYPTED )?PRIVATE KEY/{c=0}' /mnt/akv/tls.crtkey.pem > /tmp/tls.key || true
+              fi
+
+              CRT="/tmp/tls.crt"; KEY="/tmp/tls.key"
+              [ -s "$CRT" ] || CRT="/mnt/akv/tls.crt"
+              [ -s "$KEY" ] || KEY="/mnt/akv/tls.key"
+
+              if [ -s "$CRT" ] && [ -s "$KEY" ]; then
+                kubectl -n {{ $nsK }} create secret tls {{ .Values.tls.k8sSecretName }} \
+                  --cert="$CRT" --key="$KEY" --dry-run=client -o yaml | kubectl apply -f -
+                echo "[cron] TLS secret refreshed in {{ $nsK }}"
+              else
+                echo "[cron] WARN: TLS material not found; skipping"
+              fi
+            volumeMounts:
+            - name: akv
+              mountPath: /mnt/akv
+              readOnly: true
+{{- end }}

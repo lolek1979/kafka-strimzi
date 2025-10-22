@@ -1,0 +1,35 @@
+# Files and directories excluded when packaging the chart with `helm package`
+# Keep this conservative so you don't accidentally exclude required subcharts in charts/
+
+# VCS
+.git/
+.gitignore
+.github/
+.hg/
+.svn/
+CVS
+
+# IDE / OS noise
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# CI configs (not needed in the packaged chart)
+.azure-pipelines.yml
+.gitlab-ci.yml
+.github/
+
+# Local-only values (do not ship in the packaged chart)
+values-*.local.yaml
+values-*-secret.yaml
+values-*-secrets.yaml
+
+# Build/output & temp (safe to exclude from the chart package)
+dist/
+tmp/
+*.log
+
+# ⚠️ Do NOT ignore `charts/*.tgz` here — those are vendored dependencies you want to include.

@@ -1,0 +1,159 @@
+# ==============================
+# templates/20-kafka.yaml
+# ==============================
+{{- $ns    := include "kafka.ns" . -}}
+{{- $name  := include "kafka.name" . -}}
+{{- $aud   := required "kafka.oauth.audienceAppId is required" .Values.kafka.oauth.audienceAppId -}}
+{{- $issInt := include "kafka.issuerUri" (dict "ver" (default "v2" .Values.kafka.listeners.internal.issuerVersion) "ctx" .) | trim -}}
+{{- $jwksInt:= include "kafka.jwksUri"  (dict "ctx" .) | trim -}}
+{{- $issExt := include "kafka.issuerUri" (dict "ver" (default "v2" .Values.kafka.listeners.external.issuerVersion) "ctx" .) | trim -}}
+{{- $jwksExt:= include "kafka.jwksUri"  (dict "ctx" .) | trim -}}
+
+{{- /* Bind external listener values once so we can safely reference them below */ -}}
+{{- $external  := get $.Values.kafka.listeners "external" | default dict -}}
+{{- $bootstrap := get $external "bootstrap" | default dict -}}
+{{- $brokers   := get $external "brokers" | default dict -}}
+
+{{- if .Values.kafka.enabled }}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  annotations:
+    strimzi.io/node-pools: "enabled"
+    strimzi.io/kraft: "enabled"
+spec:
+  kafka:
+    version: {{ .Values.kafka.version | quote }}
+    metadataVersion: {{ .Values.kafka.metadataVersion | quote }}
+
+    {{- if .Values.kafka.authorization }}
+    authorization:
+{{ toYaml .Values.kafka.authorization | indent 6 }}
+    {{- end }}
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yaml
+
+    listeners:
+      # ---- Internal (mTLS only) ----
+      - name: internal
+        port: {{ default 9092 .Values.kafka.listeners.internal.port }}
+        type: internal
+        tls: {{ default false .Values.kafka.listeners.internal.tls }}
+        authentication:
+          type: oauth
+          validIssuerUri: {{ $issInt | quote }}
+          jwksEndpointUri: {{ $jwksInt | quote }}
+          checkAudience: true
+          clientId: {{ $aud | quote }}
+          userNameClaim: {{ default "oid" .Values.kafka.oauth.userNameClaim | quote }}
+          fallbackUserNameClaim: {{ default "appid" .Values.kafka.oauth.fallbackUserNameClaim | quote }}
+          checkAccessTokenType: {{ default false .Values.kafka.oauth.checkAccessTokenType }}
+
+
+      # ---- External (LoadBalancer TLS + OAuth) ----
+      - name: external
+        port: {{ default 9094 .Values.kafka.listeners.external.port }}
+        type: loadbalancer
+        tls: true
+        authentication:
+          type: oauth
+          validIssuerUri: {{ $issExt | quote }}
+          jwksEndpointUri: {{ $jwksExt | quote }}
+          checkAudience: true
+          clientId: {{ $aud | quote }}
+          userNameClaim: {{ default "oid" .Values.kafka.oauth.userNameClaim | quote }}
+          fallbackUserNameClaim: {{ default "appid" .Values.kafka.oauth.fallbackUserNameClaim | quote }}
+          checkAccessTokenType: {{ default false .Values.kafka.oauth.checkAccessTokenType }}
+        configuration:
+          brokerCertChainAndKey:
+            secretName: {{ .Values.tls.k8sSecretName }}
+            certificate: tls.crt
+            key: tls.key
+          externalTrafficPolicy: Local
+
+          # --- Bootstrap service ----  
+          bootstrap:
+            loadBalancerIP: {{ $bootstrap.loadBalancerIP }}
+            annotations:
+              external-dns.alpha.kubernetes.io/hostname: kafka.{{ $.Values.dns.subdomain }}.{{ $.Values.dns.domain }}.
+              external-dns.alpha.kubernetes.io/ttl: "60"
+              service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+
+          # --- Broker services ---
+          {{- if gt (len $brokers) 0 }}
+          brokers:
+            {{- range $i, $b := $brokers }}
+            - broker: {{ $b.id }}
+              {{- with $b.advertisedHost }}
+              advertisedHost: {{ . }}
+              {{- end }}
+              {{- with $b.advertisedPort }}
+              advertisedPort: {{ . }}
+              {{- end }}
+              loadBalancerIP: {{ $b.loadBalancerIP }}
+              annotations:
+                external-dns.alpha.kubernetes.io/hostname: kafka-{{ $b.id }}.{{ $.Values.dns.subdomain }}.{{ $.Values.dns.domain }}.
+                external-dns.alpha.kubernetes.io/ttl: "60"
+                service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+            {{- end }}
+          {{- end }}
+    {{- if .Values.kafka.config }}
+    config:
+{{ toYaml .Values.kafka.config | indent 6 }}
+    {{- end }}
+
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+  {{- if .Values.kafka.cruiseControl.enabled }}
+  cruiseControl:
+    brokerCapacity:
+      cpu: "1"
+      inboundNetwork: "10000KB/s"
+      outboundNetwork: "10000KB/s"
+    config:
+      default.goals: >
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.RackAwareGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.MinTopicLeadersPerBrokerGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.ReplicaCapacityGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.DiskCapacityGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.NetworkInboundCapacityGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.NetworkOutboundCapacityGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.CpuCapacityGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.ReplicaDistributionGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.PotentialNwOutGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.DiskUsageDistributionGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.NetworkInboundUsageDistributionGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.NetworkOutboundUsageDistributionGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.CpuUsageDistributionGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.TopicReplicaDistributionGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.LeaderReplicaDistributionGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.LeaderBytesInDistributionGoal
+      hard.goals: >
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.RackAwareGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.MinTopicLeadersPerBrokerGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.ReplicaCapacityGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.DiskCapacityGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.NetworkInboundCapacityGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.NetworkOutboundCapacityGoal,
+        com.linkedin.kafka.cruisecontrol.analyzer.goals.CpuCapacityGoal
+      # Must not exeed brokers count
+      sample.store.topic.replication.factor: 2
+      # Optional
+      num.partition.metrics.windows: 5
+      partition.metrics.wondow.ms: 30000
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yaml
+  {{- end }}
+{{- end }}

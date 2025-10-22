@@ -1,0 +1,54 @@
+# ==============================
+# templates/50-kafka-lag-exporter-configmap.yaml
+# ==============================
+{{- if and .Values.kafkaExporter .Values.kafkaExporter.enabled }}
+{{- $nsKafka := include "kafka.ns" . -}}
+{{- $nsLag   := include "lag-exporter.ns" . -}}
+{{- $name    := include "kafka.name" . -}}
+{{- $bootstrap := printf "%s-kafka-bootstrap.%s.svc.cluster.local:%d" $name $nsKafka (int (default 9092 .Values.kafka.listeners.internal.port)) -}}
+{{- $ver := default "v2" .Values.kafkaExporter.oauth.tokenEndpointVersion -}}
+{{- $token := include "kafka.tokenEndpoint" (dict "ver" $ver "ctx" .) | trim -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-lag-exporter-config
+  namespace: {{ $nsLag }}
+  labels: { app: kafka-lag-exporter }
+data:
+  application.conf: |
+    kafka-lag-exporter {
+      poll-interval = {{ default "30s" ((.Values.kafkaExporter | default dict).pollInterval) }}
+
+      reporters.prometheus.port = 9999
+
+      clusters = [
+        {
+          name = {{ $name | quote }}
+          bootstrap-brokers = {{ $bootstrap | quote }}
+
+          admin-client-properties {
+            security.protocol = "SASL_PLAINTEXT"
+            sasl.mechanism = "OAUTHBEARER"
+            sasl.login.callback.handler.class = "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler"
+            sasl.oauthbearer.token.endpoint.url = {{ $token | quote }}
+            sasl.jaas.config = ${?KAFKA_SASL_JAAS_CONFIG}
+          }
+
+          consumer-properties {
+            security.protocol = "SASL_PLAINTEXT"
+            sasl.mechanism = "OAUTHBEARER"
+            sasl.login.callback.handler.class = "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler"
+            sasl.oauthbearer.token.endpoint.url = {{ $token | quote }}
+            sasl.jaas.config = ${?KAFKA_SASL_JAAS_CONFIG}
+
+            key.deserializer   = "org.apache.kafka.common.serialization.ByteArrayDeserializer"
+            value.deserializer = "org.apache.kafka.common.serialization.ByteArrayDeserializer"
+            group.id = "kafkalagexporter"
+            enable.auto.commit = false
+            auto.offset.reset  = "latest"
+          }
+        }
+      ]
+    }
+{{- end }}

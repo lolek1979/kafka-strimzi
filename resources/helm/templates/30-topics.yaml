@@ -1,0 +1,19 @@
+# ==============================
+# templates/30-topics.yaml
+# ==============================
+{{- $ns := include "kafka.ns" . -}}
+{{- $name := include "kafka.name" . -}}
+{{- range .Values.topics }}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: {{ .name }}
+  namespace: {{ $ns }}
+  labels: { strimzi.io/cluster: {{ $name }} }
+spec:
+  partitions: {{ .partitions }}
+  replicas: {{ .replicas }}
+  config:
+{{ toYaml .config | indent 4 }}
+{{- end }}

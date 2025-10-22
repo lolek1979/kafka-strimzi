@@ -1,0 +1,115 @@
+trigger: none
+pr: none
+
+variables:
+  - group: aks-vzp-dev1-we-002
+
+parameters:
+  - name: firstInstall
+    displayName: "First install (create namespaces, disable extras)"
+    type: boolean
+    default: false
+
+stages:
+# ───────────────────────────── STAGE 1: First install (opt-in) ─────────────────────────────
+- stage: FirstInstall
+  displayName: "Kafka — First install (namespaces only, core broker)"
+  condition: and(succeeded(), eq('${{ parameters.firstInstall }}', 'true'))
+  pool: NisDev1
+  jobs:
+    - deployment: deploy_strimzi_operator
+      environment: aks-vzp-dev1-we-002
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - checkout: self
+                clean: true
+                fetchDepth: 0
+
+              - script: |
+                  set -euo pipefail
+                  cd resources/helm
+                  helm repo add strimzi https://strimzi.io/charts/
+                  helm repo update
+                  helm dependency update
+                displayName: "Dependencies kafka chart (Strimzi)"
+
+              # First install: create namespaces, disable optional components, longer timeout
+              - task: HelmDeploy@1
+                displayName: "Helm upgrade --install (first run)"
+                inputs:
+                  azureSubscription:    $(azureSubscriptionConnection)
+                  azureResourceGroup:   $(azureResourceGroup)
+                  kubernetesCluster:    $(kubernetesCluster)
+                  namespace:            kafka
+                  install:              true
+                  command:              upgrade
+                  chartType:            FilePath
+                  chartPath:            '$(Build.SourcesDirectory)/resources/helm'
+                  releaseName:          kafka
+                  arguments: >
+                    -f $(Build.SourcesDirectory)/resources/helm/values.yaml
+                    -f $(Build.SourcesDirectory)/resources/helm/values-dev1.yaml
+                    --create-namespace
+                    --wait
+                    --wait-for-jobs
+                    --timeout 20m
+                    --set manageNamespace=true
+                    --set kafkaUi.enabled=false
+                    --set schemaRegistry.enabled=false
+                    --set kafkaExporter.enabled=false
+
+              # Give cluster a short settle time after first CRDs/resources
+              - script: sleep 120
+                displayName: "Settle time (2 min)"
+
+# ───────────────────────── STAGE 2: Roll out full stack / upgrades ─────────────────────────
+- stage: Components
+  displayName: "Kafka — Components & upgrades"
+  # If firstInstall was true, require Stage 1 success. Otherwise run standalone.
+  dependsOn: [ FirstInstall ]
+  condition: or(eq('${{ parameters.firstInstall }}', 'false'), and(succeeded(), eq(dependencies.FirstInstall.result, 'Succeeded')))
+  pool: NisDev1
+  jobs:
+    - deployment: deploy_kafka_components
+      environment: aks-vzp-dev1-we-002
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - checkout: self
+                clean: true
+                fetchDepth: 0
+
+              - script: |
+                  set -euo pipefail
+                  cd resources/helm
+                  helm repo add strimzi https://strimzi.io/charts/
+                  helm repo update
+                  helm dependency update
+                displayName: "Dependencies kafka chart (Strimzi)"
+
+              # Option A (explicit enable): force-enable extras here
+              - task: HelmDeploy@1
+                displayName: "Helm upgrade --install (components)"
+                inputs:
+                  azureSubscription:    $(azureSubscriptionConnection)
+                  azureResourceGroup:   $(azureResourceGroup)
+                  kubernetesCluster:    $(kubernetesCluster)
+                  namespace:            kafka
+                  install:              true
+                  command:              upgrade
+                  chartType:            FilePath
+                  chartPath:            '$(Build.SourcesDirectory)/resources/helm'
+                  releaseName:          kafka
+                  arguments: >
+                    -f $(Build.SourcesDirectory)/resources/helm/values.yaml
+                    -f $(Build.SourcesDirectory)/resources/helm/values-dev1.yaml
+                    --wait
+                    --wait-for-jobs
+                    --timeout 20m
+                    --set manageNamespace=false
+                    --set kafkaUi.enabled=true
+                    --set schemaRegistry.enabled=true
+                    --set kafkaExporter.enabled=true

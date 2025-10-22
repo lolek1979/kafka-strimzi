@@ -1,0 +1,213 @@
+# ================================
+# Global
+# ================================
+manageNamespace: true
+
+namespaces:
+  kafka: kafka
+  kafkaUi: kafka-ui
+  schemaRegistry: schema-registry
+  lagExporter: observability
+
+# ================================
+# Azure (shared)
+# ================================
+azure:
+  tenantId: "1174b7b3-9af8-43df-a3b2-06d8ee22d679"
+  keyVaultName: ""
+  uamiClientId: ""
+dns:
+  subdomain: ""
+  domain: ""
+# ================================
+# TLS (listener certs from AKV)
+# ================================
+tls:
+  spcName: kafka-akv-secrets-spc
+  k8sSecretName: kafka-listener-cert
+  serviceAccount: tls-writer
+  certObjectName: kafka-tls
+  caAkvObjectName: "kafka-listener-ca"
+  materialize:
+    enabled: true
+  sync:
+    jobName: akv-secrets-job
+    image: alpine:3.20
+    waitLoops: 30
+    waitSleepSeconds: 2
+    backoffLimit: 0
+    cron:
+      enabled: true
+      schedule: "0 1 * * *"
+      timeZone: "Europe/Prague"
+      startingDeadlineSeconds: 600
+      successfulJobsHistoryLimit: 2
+      failedJobsHistoryLimit: 2
+      suspend: false
+
+# AKV -> CSI optional audience/tenant object names
+oauthAkvAudienceObjectName: ""
+oauthAkvTenantObjectName: ""
+
+# ================================
+# (Optional) Strimzi Operator settings block
+# Only useful if your templates read these values.
+# ================================
+strimzi-kafka-operator:
+  namespace: kafka
+  watchAnyNamespace: false
+  watchNamespaces: ["kafka","schema-registry","kafka-ui","observability"]
+  replicas: 1
+  leaderElection: { enable: true }
+  createGlobalResources: true
+  generateNetworkPolicy: true
+  generatePodDisruptionBudget: true
+  podDisruptionBudget: { enabled: true, minAvailable: 1 }
+  logLevel: INFO
+  resources:
+    requests: { cpu: 50m, memory: 192Mi }
+    limits:   { cpu: 200m, memory: 256Mi }
+  extraEnvs:
+    - { name: STRIMZI_LOG_LEVEL, value: "INFO" }
+    - { name: STRIMZI_JAVA_OPTS, value: "-Djava.security.egd=file:/dev/./urandom" }
+
+# ================================
+# Kafka (Strimzi) defaults
+# ================================
+kafka:
+  enabled: true
+  name: ""            # set per env in values-<env>.yaml
+  version: "3.9.0"
+  metadataVersion: "3.9-IV0"
+
+  authorization:
+    type: simple
+    superUsers: []    # set per env
+
+  oauth:
+    audienceAppId: "<GUID of nis-<env>-kafka-audience>"
+    userNameClaim: "oid"
+    fallbackUserNameClaim: "appid"
+    checkAccessTokenType: false
+
+  listeners:
+    internal:
+      port: 9092
+      tls: false
+      issuerVersion: v2
+    external:
+      port: 9094
+      issuerVersion: v2
+      bootstrap: {}
+      brokers: []
+
+  config:
+    controller.quorum.election.backoff.max.ms: 5000
+    controller.quorum.election.timeout.ms: 5000
+    controller.quorum.fetch.timeout.ms: 20000
+
+    # HA-friendly factors (3 brokers)
+    default.replication.factor: 3
+    offsets.topic.replication.factor: 3
+    transaction.state.log.replication.factor: 3
+
+    # safer ISR with 3 brokers
+    min.insync.replicas: 2
+    transaction.state.log.min.isr: 2
+
+  nodePools:
+    - name: broker
+      replicas: 3
+      roles: [broker, controller]
+      storage:
+        type: jbod
+        volumes:
+          - id: 0
+            type: persistent-claim
+            size: 20Gi
+            class: managed-csi
+            kraftMetadata: shared
+            deleteClaim: false
+  cruiseControl:
+    enabled: true
+
+# ================================
+# Kafka Exporter defaults (Strimzi managed)
+# ================================
+kafkaExporter:
+  enabled: true
+  image: seglo/kafka-lag-exporter:0.8.2
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  pollInterval: 30s
+  javaOpts: "-XX:MaxRAMPercentage=70.0"
+  oauth:
+    tokenEndpointVersion: v2
+    k8sSecretName: kafka-lag-exporter-oauth   # Secret created by AKV sync job (namespace = lagExporter)
+    jaasKey: sasl-jaas-config
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: 30s
+  amaScrape:
+    enabled: true
+
+# ================================
+# Kafka-UI defaults
+# ================================
+kafkaUi:
+  enabled: true
+  image: kafbat/kafka-ui:latest
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  resources: {}
+
+  oauth2:
+    scope: [openid, profile, email]
+    userNameAttribute: "name"
+    rolesField: "roles"
+
+  oauth:
+    issuerVersion: v2
+    securityProtocol: "SASL_PLAINTEXT"
+    k8sSecretName: kafka-ui-oauth
+    jaasKey: sasl-jaas-config
+    kv:
+      jaasName: kafka-ui-sasl-jaas-config
+
+  ingress:
+    enabled: false
+
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+
+  auth:
+    type: OAUTH2
+  domain: ""
+  schemaRegistryUrl: "http://schema-registry-port.schema-registry.svc.cluster.local:8081"
+
+# ================================
+# Schema Registry defaults
+# ================================
+schemaRegistry:
+  enabled: true
+  image: "confluentinc/cp-schema-registry:7.9.0"
+  replicas: 1
+  service:
+    port: 8081
+    type: ClusterIP
+  kafkaBootstrap: ""
+  compatibilityLevel: "BACKWARD"
+  kafkastoreReplicationFactor: 3
+  oauth:
+    issuerVersion: v2
+    k8sSecretName: schema-registry-oauth
+    jaasKey: sasl-jaas-config
+    
+# ================================
+# Example topics
+# Keep this empty in base; define in env file.
+# ================================
+topics: []

@@ -1,0 +1,42 @@
+# ==============================
+# templates/42-kafka-ui-ingress.yaml (disabled by default)
+# ==============================
+{{- if and .Values.kafkaUi.enabled .Values.kafkaUi.ingress.enabled }}
+{{- $domain := default "" .Values.kafkaUi.domain -}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kafka-ui
+  namespace: {{ include "kafka-ui.ns" . }}
+  labels:
+    app: kafka-ui
+  {{- with .Values.kafkaUi.ingress.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.kafkaUi.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if and .Values.kafkaUi.ingress.tls.enabled .Values.kafkaUi.ingress.tls.secretName }}
+  tls:
+    - secretName: {{ .Values.kafkaUi.ingress.tls.secretName | quote }}
+      {{- if $domain }}
+      hosts: [ {{ $domain | quote }} ]
+      {{- end }}
+  {{- end }}
+  rules:
+    - {{- if $domain }}
+      host: {{ $domain | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kafka-ui
+                port:
+                  number: {{ default 80 .Values.kafkaUi.service.port }}
+{{- end }}

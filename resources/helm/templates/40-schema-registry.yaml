@@ -1,0 +1,71 @@
+# ==============================
+# templates/40-schema-registry.yaml  (readiness/liveness tuned, audience helper)
+# ==============================
+{{- if .Values.schemaRegistry.enabled }}
+{{- $ns := include "schema-registry.ns" . -}}
+{{- $cfg := .Values.schemaRegistry -}}
+{{- $kns := include "kafka.ns" . -}}
+{{- $name := include "kafka.name" . -}}
+{{- $bootstrap := ($cfg.kafkaBootstrap | default (printf "%s-kafka-bootstrap.%s.svc.cluster.local:%d" $name $kns (int (default 9092 .Values.kafka.listeners.internal.port)))) -}}
+{{- $ver := default "v2" $cfg.oauth.issuerVersion -}}
+{{- $tokenUrl := include "kafka.tokenEndpoint" (dict "ver" $ver "ctx" .) | trim -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schema-registry-api
+  namespace: {{ $ns }}
+  labels: { app: schema-registry }
+spec:
+  replicas: {{ $cfg.replicas }}
+  selector: { matchLabels: { app: schema-registry } }
+  template:
+    metadata: { labels: { app: schema-registry } }
+    spec:
+      containers:
+      - name: schema-registry
+        image: {{ $cfg.image }}
+        ports: [{ name: http, containerPort: 8081 }]
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - { name: SCHEMA_REGISTRY_LISTENERS, value: "http://0.0.0.0:8081" }
+        - { name: SCHEMA_REGISTRY_HOST_NAME, value: "$(POD_IP)" }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS, value: {{ $bootstrap | quote }} }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL, value: "SASL_PLAINTEXT" }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_SASL_MECHANISM, value: "OAUTHBEARER" }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_SASL_LOGIN_CALLBACK_HANDLER_CLASS, value: "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler" }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_SASL_CLIENT_CALLBACK_HANDLER_CLASS, value: "org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler" }
+        - name: SCHEMA_REGISTRY_KAFKASTORE_SASL_JAAS_CONFIG
+          valueFrom: { secretKeyRef: { name: {{ $cfg.oauth.k8sSecretName | default "schema-registry-oauth" | quote }}, key: {{ $cfg.oauth.jaasKey | default "sasl-jaas-config" | quote }} } }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_SASL_OAUTHBEARER_TOKEN_ENDPOINT_URL, value: {{ $tokenUrl | quote }} }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_TOPIC, value: "_schemas" }
+        - { name: SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR, value: {{ printf "%d" (int ($cfg.kafkastoreReplicationFactor | default 3)) | quote }} }
+        - { name: SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL, value: {{ $cfg.compatibilityLevel | default "BACKWARD" | quote }} }
+        readinessProbe: { httpGet: { path: /subjects, port: http }, initialDelaySeconds: 60, periodSeconds: 10, timeoutSeconds: 3 }
+        livenessProbe:  { httpGet: { path: /subjects, port: http }, initialDelaySeconds: 90, periodSeconds: 15, timeoutSeconds: 3 }
+---
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: schema-registry-port
+  namespace: {{ $ns }}
+  labels: { app: schema-registry }
+  {{- with $cfg.service.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+spec:
+  selector: { app: schema-registry }
+  type: {{ $cfg.service.type | default "ClusterIP" }}
+  {{- with $cfg.service.loadBalancerIP }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  ports:
+    - name: http
+      port: {{ $cfg.service.port | default 8081 }}
+      targetPort: http
+{{- end }}

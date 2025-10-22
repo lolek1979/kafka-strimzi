@@ -1,0 +1,150 @@
+{{- $nsK := include "kafka.ns" . -}}
+{{- $nsUI := include "kafka-ui.ns" . -}}
+{{- $nsSR := include "schema-registry.ns" . -}}
+{{- $nsLag := include "lag-exporter.ns" . -}}
+{{- $lagExporter := default (dict) .Values.kafkaExporter -}}
+{{- $lagOAuth := default (dict) (index $lagExporter "oauth") -}}
+{{- $lagSecret := default "kafka-lag-exporter-oauth" (index $lagOAuth "k8sSecretName") -}}
+{{- $lagKey := default "sasl-jaas-config" (index $lagOAuth "jaasKey") -}}
+{{- if and .Values.azure.keyVaultName .Values.tls.materialize.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ default "akv-secrets-job" .Values.tls.sync.jobName | quote }}
+  namespace: {{ $nsK | quote }}
+  annotations:
+    "helm.sh/hook": "pre-install,pre-upgrade"
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": "before-hook-creation"
+spec:
+  backoffLimit: {{ default 0 .Values.tls.sync.backoffLimit }}
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: {{ default "tls-writer" .Values.tls.serviceAccount | quote }}
+      restartPolicy: Never
+      volumes:
+        - name: akv
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ default "kafka-akv-secrets-spc" .Values.tls.spcName | quote }}
+      containers:
+        - name: writer
+          image: {{ default "alpine:3.20" .Values.tls.sync.image | quote }}
+          command: ["/bin/sh","-c"]
+          args:
+            - |-
+              set -euo pipefail
+              apk add --no-cache openssl coreutils kubectl >/dev/null
+
+              # ===== TLS materialization (PEM: key + fullchain) =====
+              if [ -s /mnt/akv/tls.crtkey.pem ]; then
+                awk 'BEGIN{c=0} /BEGIN CERTIFICATE/{c=1} c{print} /END CERTIFICATE/{c=0}' /mnt/akv/tls.crtkey.pem > /tmp/tls.crt || true
+                awk 'BEGIN{c=0} /BEGIN (ENCRYPTED )?PRIVATE KEY/{c=1} c{print} /END (ENCRYPTED )?PRIVATE KEY/{c=0}' /mnt/akv/tls.crtkey.pem > /tmp/tls.key || true
+                if [ -s /tmp/tls.crt ] && [ -s /tmp/tls.key ]; then
+                  kubectl -n {{ $nsK }} create secret tls {{ .Values.tls.k8sSecretName }} \
+                    --cert=/tmp/tls.crt --key=/tmp/tls.key --dry-run=client -o yaml | kubectl apply -f -
+                  echo "[sync] TLS secret {{ .Values.tls.k8sSecretName }} applied in {{ $nsK }}"
+                else
+                  echo "[sync] WARN: tls.crtkey.pem present but failed to split key/cert"
+                fi
+              else
+                echo "[sync] INFO: /mnt/akv/tls.crtkey.pem not found (skipping broker secret)"
+              fi
+
+              # ===== Client trust: kafka-external-ca (CA chain only) =====
+              # 1) Prefer explicit CA chain from AKV if present (objectAlias: kafka-listener-ca.pem)
+              CA_SRC="/mnt/akv/kafka-listener-ca.pem"
+              if [ -s "$CA_SRC" ]; then
+                awk 'BEGIN{c=0} /BEGIN CERTIFICATE/{c=1} c{print} /END CERTIFICATE/{c=0}' \
+                  "$CA_SRC" > /tmp/ca.crt || true
+                echo "[sync] Using explicit CA chain from AKV: kafka-listener-ca.pem"
+              fi
+
+              # 2) Fallback: derive chain from the fullchain broker cert (drop the first cert = leaf)
+              if [ ! -s /tmp/ca.crt ] && [ -s /tmp/tls.crt ]; then
+                awk 'BEGIN{n=0} /BEGIN CERTIFICATE/{n++} { if(n>1) print }' /tmp/tls.crt > /tmp/ca.crt || true
+                echo "[sync] Derived CA chain from tls.crt (dropped leaf)"
+              fi
+
+              # 3) Apply only if we have something and it changed
+              if [ -s /tmp/ca.crt ]; then
+                WANT_SHA="$(sha256sum /tmp/ca.crt | awk '{print $1}')"
+                HAVE_SHA="$(kubectl -n {{ $nsK }} get secret kafka-external-ca -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d | sha256sum 2>/dev/null | awk '{print $1}' || true)"
+                if [ "$WANT_SHA" != "$HAVE_SHA" ]; then
+                  kubectl -n {{ $nsK }} create secret generic kafka-external-ca \
+                    --from-file=ca.crt=/tmp/ca.crt --dry-run=client -o yaml | kubectl apply -f -
+                  echo "[sync] kafka-external-ca created/updated in {{ $nsK }}"
+                else
+                  echo "[sync] kafka-external-ca unchanged"
+                fi
+              else
+                echo "[sync] WARN: No CA chain material found; kafka-external-ca not updated"
+              fi
+
+              # ===== OIDC inputs =====
+              req(){ [ -s "$1" ] || { echo "ERROR: missing $1" >&2; exit 1; }; }
+              req /mnt/akv/kafka-oidc-tenant
+              req /mnt/akv/kafka-oidc-audience
+              TENANT="$(cat /mnt/akv/kafka-oidc-tenant)"
+              AUDIENCE="$(cat /mnt/akv/kafka-oidc-audience)"
+              TOKEN_URL="https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token"
+              SCOPE="api://${AUDIENCE}/.default"
+
+              make_jaas() {
+                cid="$1"; csec="$2"
+                printf 'org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required clientId="%s" clientSecret="%s" scope="%s" oauth.token.endpoint.uri="%s";' \
+                  "$cid" "$csec" "$SCOPE" "$TOKEN_URL"
+              }
+
+              # ===== Kafka-UI confidential client =====
+              req /mnt/akv/kafka-ui-client-id
+              req /mnt/akv/kafka-ui-client-secret
+              UI_ID="$(cat /mnt/akv/kafka-ui-client-id)"
+              UI_SEC="$(cat /mnt/akv/kafka-ui-client-secret)"
+              UI_JAAS="$(make_jaas "$UI_ID" "$UI_SEC")"
+
+              kubectl -n {{ $nsUI }} create secret generic kafka-ui-oauth \
+                --from-literal=sasl-jaas-config="${UI_JAAS}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "[sync] kafka-ui-oauth created/updated in {{ $nsUI }}"
+
+              # Web SSO client config
+              kubectl -n {{ $nsUI }} create secret generic kafka-ui-sso \
+                --from-file=clientId=/mnt/akv/kafka-ui-client-id \
+                --from-file=clientSecret=/mnt/akv/kafka-ui-client-secret \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "[sync] kafka-ui-sso created/updated in {{ $nsUI }}"
+
+              # ===== Kafka Exporter dedicated client =====
+              req /mnt/akv/kafka-lag-client-id
+              req /mnt/akv/kafka-lag-client-secret
+              LAG_ID="$(cat /mnt/akv/kafka-lag-client-id)"
+              LAG_SEC="$(cat /mnt/akv/kafka-lag-client-secret)"
+              LAG_JAAS="$(make_jaas "$LAG_ID" "$LAG_SEC")"
+
+              kubectl -n {{ $nsLag }} create secret generic {{ $lagSecret }} \
+                --from-literal={{ $lagKey | quote }}="${LAG_JAAS}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "[sync] {{ $lagSecret }} created/updated in {{ $nsLag }}"
+
+              # ===== Schema Registry dedicated client =====
+              req /mnt/akv/kafka-schema-client-id
+              req /mnt/akv/kafka-schema-client-secret
+              SR_ID="$(cat /mnt/akv/kafka-schema-client-id)"
+              SR_SEC="$(cat /mnt/akv/kafka-schema-client-secret)"
+              SR_JAAS="$(make_jaas "$SR_ID" "$SR_SEC")"
+
+              kubectl -n {{ $nsSR }} create secret generic schema-registry-oauth \
+                --from-literal=sasl-jaas-config="${SR_JAAS}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "[sync] schema-registry-oauth created/updated in {{ $nsSR }}"
+
+          volumeMounts:
+            - name: akv
+              mountPath: /mnt/akv
+              readOnly: true
+{{- end }}

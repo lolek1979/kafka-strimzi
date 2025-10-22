@@ -1,0 +1,69 @@
+# ==============================
+# templates/50-kafka-lag-exporter.yaml
+# ==============================
+{{- if and .Values.kafkaExporter .Values.kafkaExporter.enabled }}
+{{- $ns := include "lag-exporter.ns" . -}}
+{{- $exp := .Values.kafkaExporter | default (dict) -}}
+{{- $secretName := default "kafka-lag-exporter-oauth" $exp.oauth.k8sSecretName -}}
+{{- $secretKey := default "sasl-jaas-config" $exp.oauth.jaasKey -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-lag-exporter
+  namespace: {{ $ns }}
+  labels: { app: kafka-lag-exporter }
+spec:
+  replicas: {{ default 1 $exp.replicas }}
+  selector: { matchLabels: { app: kafka-lag-exporter } }
+  template:
+    metadata:
+      labels: { app: kafka-lag-exporter }
+      annotations:
+        checksum/cfg: {{ include (print $.Template.BasePath "/50-kafka-lag-exporter-configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+      - name: exporter
+        image: {{ default "seglo/kafka-lag-exporter:0.8.2" $exp.image }}
+        imagePullPolicy: {{ default "IfNotPresent" $exp.imagePullPolicy }}
+        ports: [{ name: http, containerPort: 9999 }]
+        env:
+        - name: KAFKA_SASL_JAAS_CONFIG
+          valueFrom: { secretKeyRef: { name: {{ $secretName }}, key: {{ $secretKey }} } }
+        - name: JAVA_OPTS
+          value: {{ default "-XX:MaxRAMPercentage=70.0" $exp.javaOpts | quote }}
+        readinessProbe: { httpGet: { path: /metrics, port: http }, initialDelaySeconds: 5, periodSeconds: 10 }
+        livenessProbe:  { httpGet: { path: /metrics, port: http }, initialDelaySeconds: 20, periodSeconds: 20 }
+        volumeMounts: [{ name: cfg, mountPath: /opt/docker/conf }]
+      volumes:
+      - name: cfg
+        configMap: { name: kafka-lag-exporter-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-lag-exporter
+  namespace: {{ $ns }}
+  labels: { app: kafka-lag-exporter }
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9999"
+    prometheus.io/path: "/metrics"
+spec:
+  selector: { app: kafka-lag-exporter }
+  type: ClusterIP
+  ports: [{ name: http, port: 9999, targetPort: 9999 }]
+{{- if and $exp.serviceMonitor $exp.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kafka-lag-exporter
+  namespace: {{ default $ns $exp.serviceMonitor.namespace }}
+  labels: { app: kafka-lag-exporter }
+spec:
+  namespaceSelector: { matchNames: [ {{ $ns | quote }} ] }
+  selector: { matchLabels: { app: kafka-lag-exporter } }
+  endpoints: [{ port: http, path: "/metrics", interval: {{ default "30s" $exp.serviceMonitor.interval | quote }} }]
+{{- end }}
+{{- end }}

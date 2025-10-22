@@ -1,0 +1,13 @@
+# ==============================
+# templates/08-sa.yaml
+# ==============================
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "tls.saName" . }}
+  namespace: {{ include "kafka.ns" . }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-950"
+    "helm.sh/hook-delete-policy": before-hook-creation

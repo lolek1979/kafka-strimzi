@@ -1,0 +1,31 @@
+# --- Helm chart repo ignores ---
+
+# Chart packages built locally
+*.tgz
+!charts/*.tgz     # keep vendored subcharts that live under charts/
+
+# Local values / secrets (never commit)
+values-*.local.yaml
+values-*-secret.yaml
+values-*-secrets.yaml
+
+# Credentials / keys
+*.key
+*.pfx
+*.pem
+kubeconfig*
+.kube/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs / temp / build artifacts
+*.log
+dist/
+tmp/
+bundles/
