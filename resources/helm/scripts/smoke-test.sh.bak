@@ -104,10 +104,6 @@ fi
 : "${CA_NS:=${NS_KAFKA}}"
 : "${CA_SECRET:=kafka-external-ca}"   # must contain key: ca.crt
 
-# Internal TLS trust (Strimzi cluster CA); override INTERNAL_CLUSTER_CA_SECRET if needed
-: "${CLUSTER_CA_NS:=${NS_KAFKA}}"
-: "${CLUSTER_CA_SECRET:=${INTERNAL_CLUSTER_CA_SECRET:-}}"
-
 # =========================
 # Images / binaries (comma-separated list to allow fallbacks)
 # =========================
@@ -179,26 +175,6 @@ if ! JAAS_B64="$(kubectl -n "$JAAS_NS" get secret "$JAAS_SECRET" -o jsonpath='{.
 fi
 # CA (optional)
 CA_B64="$(kubectl -n "$CA_NS" get secret "$CA_SECRET" -o jsonpath='{.data.ca\.crt}' 2>/dev/null || true)"
-if [[ -z "$CA_B64" ]]; then
-  CA_B64="$(kubectl -n "$CA_NS" get secret "$CA_SECRET" -o jsonpath='{.data['"'"'ca.crt'"'"']}' 2>/dev/null || true)"
-fi
-
-# Strimzi cluster CA for internal TLS (optional)
-if [[ -z "${CLUSTER_CA_SECRET}" ]]; then
-  # default to cluster name derived from INTERNAL_BOOT if not explicitly set
-  if [[ "$INTERNAL_BOOT" =~ ^([^.]+)-kafka-bootstrap ]]; then
-    CLUSTER_CA_SECRET="${BASH_REMATCH[1]}-cluster-ca-cert"
-  else
-    CLUSTER_CA_SECRET=""
-  fi
-fi
-CLUSTER_CA_B64=""
-if [[ -n "$CLUSTER_CA_SECRET" ]]; then
-  CLUSTER_CA_B64="$(kubectl -n "$CLUSTER_CA_NS" get secret "$CLUSTER_CA_SECRET" -o jsonpath='{.data.ca\.crt}' 2>/dev/null || true)"
-  if [[ -z "$CLUSTER_CA_B64" ]]; then
-    CLUSTER_CA_B64="$(kubectl -n "$CLUSTER_CA_NS" get secret "$CLUSTER_CA_SECRET" -o jsonpath='{.data['"'"'ca.crt'"'"']}' 2>/dev/null || true)"
-  fi
-fi
 
 # ========= Helpers =========
 cleanup_kafka_topic() {
@@ -209,18 +185,13 @@ cleanup_kafka_topic() {
       BOOT='$INTERNAL_BOOT'
       JAAS=\$(echo '$JAAS_B64' | base64 -d)
       cat >/tmp/k.properties <<EOF
-security.protocol=SASL_SSL
+security.protocol=SASL_PLAINTEXT
 sasl.mechanism=OAUTHBEARER
 sasl.login.callback.handler.class=org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler
 sasl.oauthbearer.token.endpoint.url=$AAD_TOKEN_URL
 sasl.oauthbearer.scope=$AAD_SCOPE
 sasl.jaas.config=\${JAAS}
 EOF
-      if [ -n '$CLUSTER_CA_B64' ]; then echo '$CLUSTER_CA_B64' | base64 -d > /tmp/cluster-ca.pem; fi
-      if [ -s /tmp/cluster-ca.pem ]; then
-        echo 'ssl.truststore.type=PEM'                 >>/tmp/k.properties
-        echo 'ssl.truststore.location=/tmp/cluster-ca.pem' >>/tmp/k.properties
-      fi
       /usr/bin/kafka-topics --bootstrap-server \"\$BOOT\" \
         --command-config /tmp/k.properties --delete --topic '$TOPIC' || true
     " >/dev/null
@@ -274,13 +245,8 @@ EOF
           fi
           echo 'security.protocol=SASL_SSL' >>/tmp/k.properties
         else
-          # internal TLS
-          if [ -n '$CLUSTER_CA_B64' ]; then echo '$CLUSTER_CA_B64' | base64 -d > /tmp/cluster-ca.pem; fi
-          if [ -s /tmp/cluster-ca.pem ]; then
-            echo 'ssl.truststore.type=PEM'                 >>/tmp/k.properties
-            echo 'ssl.truststore.location=/tmp/cluster-ca.pem' >>/tmp/k.properties
-          fi
-          echo 'security.protocol=SASL_SSL' >>/tmp/k.properties
+          # interní PLAINTEXT
+          echo 'security.protocol=SASL_PLAINTEXT' >>/tmp/k.properties
         fi
 
         # rychlý metadata call s timeoutem
@@ -309,25 +275,20 @@ wait_bootstrap internal "$INTERNAL_BOOT" 300
 wait_bootstrap external "$EXTERNAL_BOOT" 300
 
 # ================= 1) Internal test =================
-echo "== Internal SASL_SSL + OAuth =="
+echo "== Internal SASL_PLAINTEXT + OAuth =="
 kubectl -n "$NS_KAFKA" run it-int --image="$IMG_KAFKA" --restart=Never --attach --rm --command -- \
   bash -lc "
     set -euo pipefail
     BOOT='$INTERNAL_BOOT'
     JAAS=\$(echo '$JAAS_B64' | base64 -d)
     cat >/tmp/k.properties <<EOF
-security.protocol=SASL_SSL
+security.protocol=SASL_PLAINTEXT
 sasl.mechanism=OAUTHBEARER
 sasl.login.callback.handler.class=org.apache.kafka.common.security.oauthbearer.secured.OAuthBearerLoginCallbackHandler
 sasl.oauthbearer.token.endpoint.url=$AAD_TOKEN_URL
 sasl.oauthbearer.scope=$AAD_SCOPE
 sasl.jaas.config=\${JAAS}
 EOF
-    if [ -n '$CLUSTER_CA_B64' ]; then echo '$CLUSTER_CA_B64' | base64 -d > /tmp/cluster-ca.pem; fi
-    if [ -s /tmp/cluster-ca.pem ]; then
-      echo 'ssl.truststore.type=PEM'                 >>/tmp/k.properties
-      echo 'ssl.truststore.location=/tmp/cluster-ca.pem' >>/tmp/k.properties
-    fi
     /usr/bin/kafka-topics --bootstrap-server \"\$BOOT\" --command-config /tmp/k.properties \
       --create --if-not-exists --topic '$TOPIC' --partitions $PARTITIONS --replication-factor $RF
 
