@@ -23,7 +23,7 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ printf "%s-cron" (default "akv-secrets-materialize" .Values.tls.sync.jobName) }}
+  name: {{ printf "%s-ca-replicate-cron" (default "akv-secrets-materialize" .Values.tls.sync.jobName) }}
   namespace: {{ $nsK }}
 spec:
   schedule: {{ .Values.tls.sync.cron.schedule | quote }}

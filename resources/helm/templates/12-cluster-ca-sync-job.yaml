@@ -49,23 +49,6 @@ spec:
             set -euo pipefail
             apk add --no-cache coreutils kubectl >/dev/null
 
-            wait_for_kafka_ready() {
-              name="$1"
-              timeout="$2"
-              step="$3"
-              [ -n "$name" ] || return 1
-              remaining="$timeout"
-              while [ "$remaining" -gt 0 ]; do
-                status="$(kubectl -n {{ $nsK }} get kafka.kafka.strimzi.io "$name" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
-                if [ "$status" = "True" ]; then
-                  return 0
-                fi
-                sleep "$step"
-                remaining=$((remaining - step))
-              done
-              return 1
-            }
-
             wait_for_secret() {
               name="$1"
               for i in $(seq 1 {{ $loops }}); do
@@ -79,12 +62,8 @@ spec:
 
             KAFKA_NAME="{{ $kafkaName }}"
             WAIT_READY={{ $waitReady }}
-            READY_STEP=10
             if [ "$WAIT_READY" -gt 0 ] && [ -n "$KAFKA_NAME" ]; then
-              echo "[ca-replicator] Waiting for Kafka ${KAFKA_NAME} Ready (timeout: ${WAIT_READY}s)"
-              if ! wait_for_kafka_ready "$KAFKA_NAME" "$WAIT_READY" "$READY_STEP"; then
-                echo "[ca-replicator] WARN: Kafka ${KAFKA_NAME} not Ready after ${WAIT_READY}s; continuing with CA replication"
-              fi
+              echo "[ca-replicator] INFO: kafkaReadyTimeoutSeconds > 0 is deprecated; skipping wait"
             fi
 
             copy_ca_secret() {
