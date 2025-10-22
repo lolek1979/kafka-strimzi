@@ -78,10 +78,6 @@ spec:
               key="$3"
               jsonpath="$4"
               [ -n "$secret" ] || return 0
-              if ! kubectl get ns "$dest_ns" >/dev/null 2>&1; then
-                echo "[ca-fanout] INFO: Namespace ${dest_ns} not found; skipping ${secret}"
-                return 0
-              fi
               if ! wait_for_secret "$secret"; then
                 echo "[ca-fanout] WARN: Timed out waiting for ${secret} in {{ $nsK }}"
                 return 0
