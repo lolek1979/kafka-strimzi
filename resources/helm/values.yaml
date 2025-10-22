@@ -33,7 +33,7 @@ tls:
   sync:
     jobName: akv-secrets-job
     image: alpine:3.20
-    waitLoops: 30
+    waitLoops: 150
     waitSleepSeconds: 2
     backoffLimit: 0
     cron:

@@ -61,6 +61,10 @@ spec:
                 key="$3"
                 jsonpath="$4"
                 [ -n "$secret" ] || return 0
+                if ! kubectl get ns "$dest_ns" >/dev/null 2>&1; then
+                  echo "[cron] INFO: Namespace ${dest_ns} not found; skipping ${secret}"
+                  return 0
+                fi
                 if ! kubectl -n {{ $nsK }} get secret "$secret" >/dev/null 2>&1; then
                   echo "[cron] INFO: Source CA secret ${secret} not yet available in {{ $nsK }}; skipping ${dest_ns}"
                   return 0
