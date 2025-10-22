@@ -95,6 +95,8 @@ kafka:
 # Kafka-UI (env)
 # ================================
 kafkaUi:
+  names:
+    internal: "internal"
   ingress: { enabled: false }
   service:
     type: LoadBalancer

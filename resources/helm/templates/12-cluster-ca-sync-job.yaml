@@ -22,17 +22,17 @@
 {{- $sleep := default 2 .Values.tls.sync.waitSleepSeconds -}}
 {{- $kafkaName := include "kafka.name" . -}}
 {{- $waitReady := default 900 .Values.tls.sync.kafkaReadyTimeoutSeconds -}}
-{{- if or $kuiCaSecret $srCaSecret $lagCaSecret }}
+{{- if or $kuiCaSecret $kuiExtCaSecret $srCaSecret $lagCaSecret }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ printf "%s-ca-fanout" (default "akv-secrets-job" .Values.tls.sync.jobName) | quote }}
+  name: {{ printf "%s-ca-replicate" (default "akv-secrets-job" .Values.tls.sync.jobName) | quote }}
   namespace: {{ $nsK | quote }}
   annotations:
     "helm.sh/hook": "post-install,post-upgrade"
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": "before-hook-creation"
+    "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
 spec:
   backoffLimit: {{ default 0 .Values.tls.sync.backoffLimit }}
   ttlSecondsAfterFinished: 300
@@ -41,7 +41,7 @@ spec:
       serviceAccountName: {{ default "tls-writer" .Values.tls.serviceAccount | quote }}
       restartPolicy: Never
       containers:
-      - name: ca-fanout
+      - name: ca-replicator
         image: {{ default "alpine:3.20" .Values.tls.sync.image | quote }}
         command: ["/bin/sh","-c"]
         args:
@@ -81,9 +81,9 @@ spec:
             WAIT_READY={{ $waitReady }}
             READY_STEP=10
             if [ "$WAIT_READY" -gt 0 ] && [ -n "$KAFKA_NAME" ]; then
-              echo "[ca-fanout] Waiting for Kafka ${KAFKA_NAME} Ready (timeout: ${WAIT_READY}s)"
+              echo "[ca-replicator] Waiting for Kafka ${KAFKA_NAME} Ready (timeout: ${WAIT_READY}s)"
               if ! wait_for_kafka_ready "$KAFKA_NAME" "$WAIT_READY" "$READY_STEP"; then
-                echo "[ca-fanout] WARN: Kafka ${KAFKA_NAME} not Ready after ${WAIT_READY}s; continuing with CA fan-out"
+                echo "[ca-replicator] WARN: Kafka ${KAFKA_NAME} not Ready after ${WAIT_READY}s; continuing with CA replication"
               fi
             fi
 
@@ -93,7 +93,7 @@ spec:
               key="$3"
               [ -n "$secret" ] || return 0
               if ! wait_for_secret "$secret"; then
-                echo "[ca-fanout] WARN: Timed out waiting for ${secret} in {{ $nsK }}"
+                echo "[ca-replicator] WARN: Timed out waiting for ${secret} in {{ $nsK }}"
                 return 0
               fi
               path="{.data['$key']}"
@@ -104,18 +104,18 @@ spec:
               fi
               if [ -z "$data" ]; then
                 keys="$(kubectl -n {{ $nsK }} get secret "$secret" -o jsonpath='{range $k,$v := .data}{$k} {end}' 2>/dev/null || true)"
-                echo "[ca-fanout] WARN: Secret ${secret} missing key ${key} in {{ $nsK }} (available: ${keys})"
+                echo "[ca-replicator] WARN: Secret ${secret} missing key ${key} in {{ $nsK }} (available: ${keys})"
                 return 0
               fi
               tmp="$(mktemp)"
               if ! printf '%s' "$data" | base64 -d > "$tmp" 2>/dev/null; then
-                echo "[ca-fanout] WARN: Failed to decode ${secret}/${key}"
+                echo "[ca-replicator] WARN: Failed to decode ${secret}/${key}"
                 rm -f "$tmp"
                 return 0
               fi
               kubectl -n "$dest_ns" create secret generic "$secret" \
                 --from-file="${key}=$tmp" --dry-run=client -o yaml | kubectl apply -f -
-              echo "[ca-fanout] Cluster CA ${secret} synced to ${dest_ns}"
+              echo "[ca-replicator] Cluster CA ${secret} synced to ${dest_ns}"
               rm -f "$tmp"
             }
 
