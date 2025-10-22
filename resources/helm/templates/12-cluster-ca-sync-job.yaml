@@ -48,18 +48,22 @@ spec:
             set -euo pipefail
             apk add --no-cache coreutils kubectl >/dev/null
 
-            KAFKA_NAME="{{ $kafkaName }}"
-            WAIT_READY={{ $waitReady }}
-            if [ "$WAIT_READY" -gt 0 ]; then
-              if kubectl -n {{ $nsK }} get kafka.kafka.strimzi.io "$KAFKA_NAME" >/dev/null 2>&1; then
-                echo "[ca-fanout] Waiting for Kafka ${KAFKA_NAME} Ready (timeout: ${WAIT_READY}s)"
-                if ! kubectl -n {{ $nsK }} wait kafka.kafka.strimzi.io/"$KAFKA_NAME" --for=condition=Ready --timeout={{ printf "%ds" $waitReady }}; then
-                  echo "[ca-fanout] WARN: Kafka ${KAFKA_NAME} not Ready after ${WAIT_READY}s; continuing with CA fan-out"
+            wait_for_kafka_ready() {
+              name="$1"
+              timeout="$2"
+              step="$3"
+              [ -n "$name" ] || return 1
+              remaining="$timeout"
+              while [ "$remaining" -gt 0 ]; do
+                status="$(kubectl -n {{ $nsK }} get kafka.kafka.strimzi.io "$name" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+                if [ "$status" = "True" ]; then
+                  return 0
                 fi
-              else
-                echo "[ca-fanout] INFO: Kafka resource ${KAFKA_NAME} not yet created; continuing with best effort"
-              fi
-            fi
+                sleep "$step"
+                remaining=$((remaining - step))
+              done
+              return 1
+            }
 
             wait_for_secret() {
               name="$1"
@@ -71,6 +75,16 @@ spec:
               done
               return 1
             }
+
+            KAFKA_NAME="{{ $kafkaName }}"
+            WAIT_READY={{ $waitReady }}
+            READY_STEP=10
+            if [ "$WAIT_READY" -gt 0 ] && [ -n "$KAFKA_NAME" ]; then
+              echo "[ca-fanout] Waiting for Kafka ${KAFKA_NAME} Ready (timeout: ${WAIT_READY}s)"
+              if ! wait_for_kafka_ready "$KAFKA_NAME" "$WAIT_READY" "$READY_STEP"; then
+                echo "[ca-fanout] WARN: Kafka ${KAFKA_NAME} not Ready after ${WAIT_READY}s; continuing with CA fan-out"
+              fi
+            fi
 
             copy_ca_secret() {
               dest_ns="$1"
