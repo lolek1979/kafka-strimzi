@@ -127,8 +127,6 @@ kafkaUi:
       caSecretName: "kafka-external-ca"
       caCertificate: ca.crt
       mountPath: /etc/kafka/external-ca
-    oauth:
-      reusePrimarySecret: true
   schemaRegistryUrl: "http://schema-registry.ntest1.az.vzp.cz:8081"
   auth: { type: OAUTH2 }
   domain: ""

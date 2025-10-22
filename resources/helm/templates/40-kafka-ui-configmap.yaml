@@ -18,7 +18,6 @@
 {{- $extName := default "external" $ext.name -}}
 {{- $extProtocol := default "SASL_SSL" $ext.securityProtocol -}}
 {{- $extOauth := $ext.oauth | default (dict) -}}
-{{- $extReuse := default true $extOauth.reusePrimarySecret -}}
 {{- $extSchema := $ext.schemaRegistryUrl | default ($kui.schemaRegistryUrl | default (printf "http://schema-registry-port.%s.svc.cluster.local:8081" $nsSR)) -}}
 {{- $extVer := default $ver $ext.oauth.issuerVersion -}}
 {{- $tokenExt := include "kafka.tokenEndpoint" (dict "ver" $extVer "ctx" .) | trim -}}

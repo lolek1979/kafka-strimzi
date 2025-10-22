@@ -195,7 +195,6 @@ kafkaUi:
       caCertificate: ca.crt
       mountPath: /etc/kafka/external-ca
     oauth:
-      reusePrimarySecret: true
       k8sSecretName: ""
       jaasKey: ""
 

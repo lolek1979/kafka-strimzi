@@ -5,17 +5,10 @@
 {{- $extTls := $ext.tls | default (dict) -}}
 {{- $extEnabled := and ($ext.enabled | default false) ($ext.bootstrapServers | default "") -}}
 {{- $extOauth := $ext.oauth | default (dict) -}}
-{{- $extReuse := default true $extOauth.reusePrimarySecret -}}
 {{- $primarySecret := default "kafka-ui-oauth" $kui.oauth.k8sSecretName -}}
 {{- $primaryKey := default "sasl-jaas-config" $kui.oauth.jaasKey -}}
-{{- $externalSecret := $primarySecret -}}
-{{- $externalKey := $primaryKey -}}
-{{- if and $extEnabled (not $extReuse) ($extOauth.k8sSecretName | default "") -}}
-  {{- $externalSecret = $extOauth.k8sSecretName -}}
-{{- end -}}
-{{- if and $extEnabled (not $extReuse) ($extOauth.jaasKey | default "") -}}
-  {{- $externalKey = $extOauth.jaasKey -}}
-{{- end -}}
+{{- $externalSecret := default $primarySecret $extOauth.k8sSecretName -}}
+{{- $externalKey := default $primaryKey $extOauth.jaasKey -}}
 {{- $extCaSecret := default "" $extTls.caSecretName -}}
 
 ---
